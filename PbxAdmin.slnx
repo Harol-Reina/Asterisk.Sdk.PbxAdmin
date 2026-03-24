@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PbxAdmin/PbxAdmin.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PbxAdmin.Tests/PbxAdmin.Tests.csproj" />
+    <Project Path="tests/PbxAdmin.E2E.Tests/PbxAdmin.E2E.Tests.csproj" />
+  </Folder>
+</Solution>

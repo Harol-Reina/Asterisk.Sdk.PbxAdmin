@@ -1,0 +1,23 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+.idea/
+*.swp
+*~
+
+# Build outputs
+artifacts/
+publish/
+
+# Test results
+TestResults/
+test-videos/
+
+# Superpowers (local plans/specs)
+docs/superpowers/
+.superpowers/
+
+# Worktrees
+.worktrees/

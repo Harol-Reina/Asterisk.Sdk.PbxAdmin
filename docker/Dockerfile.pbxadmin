@@ -1,0 +1,25 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+
+WORKDIR /src
+
+# Copy solution and project files for restore layer caching
+COPY PbxAdmin.slnx .
+COPY global.json .
+COPY src/PbxAdmin/*.csproj src/PbxAdmin/
+
+# Restore (pulls Asterisk.Sdk packages from NuGet)
+RUN dotnet restore src/PbxAdmin/
+
+# Copy all source code
+COPY src/PbxAdmin/ src/PbxAdmin/
+
+# Publish
+RUN dotnet publish src/PbxAdmin/ -c Release -o /app
+
+# Runtime stage
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+COPY --from=build /app .
+EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
+ENTRYPOINT ["dotnet", "PbxAdmin.dll"]
