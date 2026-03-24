@@ -20,5 +20,8 @@ docs/
 .superpowers/
 CLAUDE.md
 
+# Claude Code agents and local config
+.claude/
+
 # Worktrees
 .worktrees/
