@@ -15,9 +15,10 @@ publish/
 TestResults/
 test-videos/
 
-# Superpowers (local plans/specs)
-docs/superpowers/
+# Local documentation (specs, plans, architecture — not committed)
+docs/
 .superpowers/
+CLAUDE.md
 
 # Worktrees
 .worktrees/
