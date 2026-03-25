@@ -107,6 +107,11 @@ services:
   pstn-emulator:
     image: docker-asterisk-file:latest
     container_name: demo-pstn
+    depends_on:
+      asterisk-realtime:
+        condition: service_healthy
+      asterisk-file:
+        condition: service_healthy
     volumes:
       - ../docker/functional/pstn-emulator-config/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ../docker/functional/pstn-emulator-config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
