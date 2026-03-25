@@ -56,7 +56,8 @@ public sealed class SoftphoneService : IAsyncDisposable
             Extension = creds.Extension;
             _dotNetRef = DotNetObjectReference.Create(this);
             await _js.InvokeVoidAsync("Softphone.register",
-                creds.WssUrl, creds.Extension, creds.Password, creds.Extension, _dotNetRef);
+                creds.WssUrl, creds.Extension, creds.Password, creds.Extension, _dotNetRef,
+                creds.TurnUrl, creds.TurnUsername, creds.TurnPassword);
         }
         catch (Exception ex)
         {

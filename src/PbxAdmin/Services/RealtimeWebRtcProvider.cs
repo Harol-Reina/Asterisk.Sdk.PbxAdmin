@@ -100,13 +100,15 @@ public sealed class RealtimeWebRtcProvider : IWebRtcExtensionProvider
                 password,
             }, commandTimeout: 15, cancellationToken: ct));
 
-            // Upsert ps_aors
+            // Upsert ps_aors — qualify_frequency=0 disables OPTIONS polling
+            // which fails for WebSocket contacts (browser won't respond)
             const string aorSql = """
-                INSERT INTO ps_aors (id, max_contacts, remove_existing)
-                VALUES (@id, 1, 'yes')
+                INSERT INTO ps_aors (id, max_contacts, remove_existing, qualify_frequency)
+                VALUES (@id, 1, 'yes', 0)
                 ON CONFLICT (id) DO UPDATE SET
                     max_contacts = EXCLUDED.max_contacts,
-                    remove_existing = EXCLUDED.remove_existing
+                    remove_existing = EXCLUDED.remove_existing,
+                    qualify_frequency = EXCLUDED.qualify_frequency
                 """;
 
             await conn.ExecuteAsync(new CommandDefinition(aorSql, new
@@ -118,7 +120,8 @@ public sealed class RealtimeWebRtcProvider : IWebRtcExtensionProvider
             await _resolver.GetProvider(serverId).ReloadModuleAsync(serverId, "res_pjsip.so", ct);
 
             RealtimeWebRtcLog.Provisioned(_logger, serverId, extensionId);
-            return new WebRtcCredentials(extensionId, password, wssUrl);
+            return new WebRtcCredentials(extensionId, password, wssUrl,
+                _options.TurnServer, _options.TurnUsername, _options.TurnPassword);
         }
         catch (Exception ex)
         {

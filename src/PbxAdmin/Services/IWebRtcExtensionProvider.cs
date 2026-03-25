@@ -10,4 +10,4 @@ public interface IWebRtcExtensionProvider
     Task<bool> ExistsAsync(string serverId, string extensionId, CancellationToken ct = default);
 }
 
-public sealed record WebRtcCredentials(string Extension, string Password, string WssUrl);
+public sealed record WebRtcCredentials(string Extension, string Password, string WssUrl, string? TurnUrl = null, string? TurnUsername = null, string? TurnPassword = null);

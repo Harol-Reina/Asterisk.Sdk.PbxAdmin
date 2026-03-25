@@ -78,7 +78,8 @@ public sealed class FileWebRtcProvider : IWebRtcExtensionProvider
                 FileWebRtcLog.ReloadFailed(_logger, extensionId);
 
             FileWebRtcLog.Provisioned(_logger, serverId, extensionId, filePath);
-            return new WebRtcCredentials(extensionId, password, wssUrl);
+            return new WebRtcCredentials(extensionId, password, wssUrl,
+                _options.TurnServer, _options.TurnUsername, _options.TurnPassword);
         }
         catch (Exception ex)
         {
@@ -133,6 +134,7 @@ public sealed class FileWebRtcProvider : IWebRtcExtensionProvider
             ["type"] = "aor",
             ["max_contacts"] = "1",
             ["remove_existing"] = "yes",
+            ["qualify_frequency"] = "0",
         };
 
     /// <summary>

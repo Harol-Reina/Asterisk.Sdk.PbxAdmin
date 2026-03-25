@@ -9,8 +9,9 @@ window.Softphone = {
     _ringbackElement: null,
     _ringbackReady: false,
     _dtmfCtx: null,
+    _iceServers: [],
 
-    async register(wssUrl, extension, password, displayName, dotNetRef) {
+    async register(wssUrl, extension, password, displayName, dotNetRef, turnUrl, turnUsername, turnPassword) {
         this._dotNetRef = dotNetRef;
         this._audioElement = document.getElementById("softphone-remote-audio");
         this._ringbackElement = document.getElementById("softphone-ringback");
@@ -29,6 +30,32 @@ window.Softphone = {
             if (!uri) {
                 dotNetRef.invokeMethodAsync("OnRegistrationFailed", "Invalid SIP URI");
                 return;
+            }
+
+            // Build ICE servers list (TURN for NAT traversal when behind Docker/NAT)
+            this._iceServers = [];
+            if (turnUrl) {
+                this._iceServers.push({
+                    urls: [turnUrl, turnUrl.replace("turn:", "stun:")],
+                    username: turnUsername || "",
+                    credential: turnPassword || ""
+                });
+            }
+
+            // Patch RTCPeerConnection to inject TURN/ICE servers into every
+            // PeerConnection created by SIP.js. This is necessary because
+            // SIP.js 0.21.x does not expose a clean API to set iceServers.
+            if (this._iceServers.length > 0) {
+                const iceServers = this._iceServers;
+                const OrigPC = window.RTCPeerConnection;
+                window.RTCPeerConnection = function(config, constraints) {
+                    config = config || {};
+                    config.iceServers = iceServers;
+                    return new OrigPC(config, constraints);
+                };
+                window.RTCPeerConnection.prototype = OrigPC.prototype;
+                // Store original to restore on unregister
+                this._origRTCPeerConnection = OrigPC;
             }
 
             this._ua = new SIP.UserAgent({
@@ -63,7 +90,10 @@ window.Softphone = {
 
             await this._session.invite({
                 sessionDescriptionHandlerOptions: {
-                    constraints: { audio: true, video: false }
+                    constraints: { audio: true, video: false },
+                    peerConnectionConfiguration: {
+                        iceServers: this._iceServers
+                    }
                 }
             });
             this._startRingback();
@@ -80,7 +110,10 @@ window.Softphone = {
         try {
             await this._session.accept({
                 sessionDescriptionHandlerOptions: {
-                    constraints: { audio: true, video: false }
+                    constraints: { audio: true, video: false },
+                    peerConnectionConfiguration: {
+                        iceServers: this._iceServers
+                    }
                 }
             });
         } catch (err) {

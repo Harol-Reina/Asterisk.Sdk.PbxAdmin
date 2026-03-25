@@ -1,4 +1,32 @@
 services:
+  # TURN/STUN relay for WebRTC NAT traversal.
+  # Asterisk and the browser both use this to relay media when direct
+  # connectivity fails (e.g. Docker NAT, remote networks).
+  coturn:
+    image: coturn/coturn:alpine
+    container_name: demo-coturn
+    network_mode: host
+    command:
+      - --listening-port=3478
+      - --min-port=49152
+      - --max-port=49200
+      - --realm=pbxadmin
+      - --user=pbxadmin:pbxadmin
+      - --lt-cred-mech
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+      - --log-file=stdout
+      - --verbose
+      - --external-ip=${EXTERNAL_IP:-127.0.0.1}
+      - --relay-ip=${EXTERNAL_IP:-127.0.0.1}
+      - --listening-ip=0.0.0.0
+    healthcheck:
+      test: ["CMD", "turnadmin", "-l"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   postgres:
     image: postgres:17-alpine
     container_name: demo-postgres
@@ -20,13 +48,19 @@ services:
       context: .
       dockerfile: Dockerfile.asterisk-realtime
     container_name: demo-pbx-realtime
+    entrypoint: ["/entrypoint-asterisk.sh"]
+    environment:
+      - EXTERNAL_IP=${EXTERNAL_IP:-}
     ports:
       - "5038:5038"       # AMI
       - "8088:8088"       # ARI HTTP
       - "5060:5060/udp"   # SIP
       - "8180:8180"       # WS (WebRTC plain, dev)
       - "8089:8089"       # WSS (WebRTC TLS, prod)
+      - "20000-20050:20000-20050/udp"   # RTP media (WebRTC)
     volumes:
+      - ./entrypoint-asterisk.sh:/entrypoint-asterisk.sh:ro
+      - ./asterisk-config-realtime/rtp.conf:/etc/asterisk/rtp.conf
       - ./asterisk-config-realtime/ari.conf:/etc/asterisk/ari.conf:ro
       - ./asterisk-config-realtime/asterisk.conf:/etc/asterisk/asterisk.conf:ro
       - ./asterisk-config-realtime/cdr.conf:/etc/asterisk/cdr.conf:ro
@@ -72,13 +106,19 @@ services:
       context: .
       dockerfile: Dockerfile.asterisk-file
     container_name: demo-pbx-file
+    entrypoint: ["/entrypoint-asterisk.sh"]
+    environment:
+      - EXTERNAL_IP=${EXTERNAL_IP:-}
     ports:
       - "5039:5038"       # AMI
       - "8188:8088"       # ARI HTTP
       - "5061:5060/udp"   # SIP
       - "8280:8180"       # WS (WebRTC plain, dev)
       - "8190:8089"       # WSS (WebRTC TLS, prod)
+      - "20100-20150:20100-20150/udp"   # RTP media (WebRTC)
     volumes:
+      - ./entrypoint-asterisk.sh:/entrypoint-asterisk.sh:ro
+      - ./asterisk-config-file/rtp.conf:/etc/asterisk/rtp.conf
       - ./asterisk-config-file/ari.conf:/etc/asterisk/ari.conf:ro
       - ./asterisk-config-file/asterisk.conf:/etc/asterisk/asterisk.conf:ro
       - ./asterisk-config-file/confbridge.conf:/etc/asterisk/confbridge.conf
@@ -131,6 +171,7 @@ services:
     container_name: asterisk-pbx-admin
     ports:
       - "8080:8080"
+      - "8443:8443"
     depends_on:
       asterisk-realtime:
         condition: service_healthy
@@ -139,6 +180,9 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      # TLS certificate for HTTPS (WebRTC requires secure context)
+      - ./certs/pbxadmin.pem:/app/certs/pbxadmin.pem:ro
+      - ./certs/pbxadmin.key:/app/certs/pbxadmin.key:ro
       # Shared MOH files (read-only, same for both servers)
       - ./moh:/data/moh:ro
       # Recordings — mounted at the fallback path that the Recordings page uses
@@ -154,6 +198,9 @@ services:
     environment:
       - DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE=false
       - Logging__LogLevel__Default=Debug
+      # Kestrel HTTPS certificate
+      - Kestrel__Certificates__Default__Path=/app/certs/pbxadmin.pem
+      - Kestrel__Certificates__Default__KeyPath=/app/certs/pbxadmin.key
       - Auth__Username=admin
       - Auth__Password=admin
       # Realtime PBX (extensions 2XXX/3XXX, queues sales/support)
@@ -172,6 +219,9 @@ services:
       - Asterisk__Servers__0__ExtensionRange__End=3999
       - Asterisk__Servers__0__WssPort=8089
       - Softphone__UseTls=true
+      - Softphone__TurnServer=turn:${EXTERNAL_IP:-127.0.0.1}:3478
+      - Softphone__TurnUsername=pbxadmin
+      - Softphone__TurnPassword=pbxadmin
       # File-mode PBX (extensions 4XXX/5XXX, queues sales2/support2)
       - Asterisk__Servers__1__Id=pbx-file
       - Asterisk__Servers__1__Hostname=asterisk-file
