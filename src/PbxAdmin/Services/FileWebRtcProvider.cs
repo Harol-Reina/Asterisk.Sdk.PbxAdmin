@@ -46,10 +46,10 @@ public sealed class FileWebRtcProvider : IWebRtcExtensionProvider
         _logger = logger;
     }
 
-    public async Task<WebRtcCredentials> ProvisionAsync(string serverId, CancellationToken ct = default)
+    public async Task<WebRtcCredentials> ProvisionAsync(string serverId, string? browserHost = null, CancellationToken ct = default)
     {
         var password = Guid.NewGuid().ToString("N")[..16];
-        var wssHost = _options.WssHost ?? "localhost";
+        var wssHost = _options.WssHost ?? browserHost ?? "localhost";
         var wssPort = GetWssPort(serverId);
         var scheme = _options.UseTls ? "wss" : "ws";
         var wssUrl = string.Create(CultureInfo.InvariantCulture, $"{scheme}://{wssHost}:{wssPort}/ws");

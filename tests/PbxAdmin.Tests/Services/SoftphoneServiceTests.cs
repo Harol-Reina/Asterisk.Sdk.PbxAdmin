@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Options;
 using Microsoft.JSInterop;
 using NSubstitute;
@@ -27,8 +28,9 @@ public class SoftphoneServiceTests
         configResolver.GetConfigMode(Arg.Any<string>()).Returns(ConfigMode.File);
 
         var resolver = new WebRtcProviderResolver(null!, null!, configResolver);
+        var nav = Substitute.For<NavigationManager>();
 
-        return new SoftphoneService(js, toast, resolver);
+        return new SoftphoneService(js, toast, resolver, nav);
     }
 
     // -----------------------------------------------------------------------

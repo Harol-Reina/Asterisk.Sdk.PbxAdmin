@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Microsoft.Extensions.Options;
 using PbxAdmin.Models;
@@ -13,6 +14,7 @@ public sealed class SoftphoneService : IAsyncDisposable
     private readonly IJSRuntime _js;
     private readonly IToastService _toast;
     private readonly WebRtcProviderResolver _providerResolver;
+    private readonly NavigationManager _navigation;
     private DotNetObjectReference<SoftphoneService>? _dotNetRef;
 
     public SoftphoneState State { get; private set; } = SoftphoneState.Unregistered;
@@ -29,11 +31,13 @@ public sealed class SoftphoneService : IAsyncDisposable
     public SoftphoneService(
         IJSRuntime js,
         IToastService toast,
-        WebRtcProviderResolver providerResolver)
+        WebRtcProviderResolver providerResolver,
+        NavigationManager navigation)
     {
         _js = js;
         _toast = toast;
         _providerResolver = providerResolver;
+        _navigation = navigation;
     }
 
     // -----------------------------------------------------------------------
@@ -46,8 +50,9 @@ public sealed class SoftphoneService : IAsyncDisposable
         SetState(SoftphoneState.Registering);
         try
         {
+            var browserHost = new Uri(_navigation.Uri).Host;
             var provider = _providerResolver.GetProvider(serverId);
-            var creds = await provider.ProvisionAsync(serverId);
+            var creds = await provider.ProvisionAsync(serverId, browserHost);
             Extension = creds.Extension;
             _dotNetRef = DotNetObjectReference.Create(this);
             await _js.InvokeVoidAsync("Softphone.register",

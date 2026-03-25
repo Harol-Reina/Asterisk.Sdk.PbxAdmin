@@ -1,5 +1,6 @@
 using Bunit;
 using FluentAssertions;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
@@ -22,9 +23,10 @@ public sealed class SoftphoneWidgetTests : IAsyncDisposable
         // These tests do not call ConnectAsync, so null! is safe for the resolver parameter.
         var jsRuntime = Substitute.For<IJSRuntime>();
         var toast = Substitute.For<IToastService>();
+        var nav = Substitute.For<NavigationManager>();
 
         _ctx.Services.AddScoped<SoftphoneService>(_ =>
-            new SoftphoneService(jsRuntime, toast, null!));
+            new SoftphoneService(jsRuntime, toast, null!, nav));
 
         var serverSvc = Substitute.For<ISelectedServerService>();
         serverSvc.SelectedServerId.Returns("pbx-test");

@@ -6,7 +6,7 @@ public interface IWebRtcExtensionProvider
     /// Provisions a WebRTC PJSIP extension. Finds the next available numeric extension
     /// within the server's configured range, creates it, and returns credentials.
     /// </summary>
-    Task<WebRtcCredentials> ProvisionAsync(string serverId, CancellationToken ct = default);
+    Task<WebRtcCredentials> ProvisionAsync(string serverId, string? browserHost = null, CancellationToken ct = default);
     Task<bool> ExistsAsync(string serverId, string extensionId, CancellationToken ct = default);
 }
 
