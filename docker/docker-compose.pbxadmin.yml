@@ -33,7 +33,7 @@ services:
       - ./asterisk-config-realtime/cdr_odbc.conf:/etc/asterisk/cdr_odbc.conf:ro
       - ./asterisk-config-realtime/cel.conf:/etc/asterisk/cel.conf:ro
       - ./asterisk-config-realtime/cel_odbc.conf:/etc/asterisk/cel_odbc.conf:ro
-      - ./asterisk-config-realtime/confbridge.conf:/etc/asterisk/confbridge.conf:ro
+      - ./asterisk-config-realtime/confbridge.conf:/etc/asterisk/confbridge.conf
       - ./asterisk-config-realtime/extconfig.conf:/etc/asterisk/extconfig.conf:ro
       - ./asterisk-config-realtime/extensions.conf:/etc/asterisk/extensions.conf
       - ./asterisk-config-realtime/features.conf:/etc/asterisk/features.conf:ro
@@ -90,7 +90,7 @@ services:
       - ./asterisk-config-file/musiconhold.conf:/etc/asterisk/musiconhold.conf
       - ./asterisk-config-file/pjsip.conf:/etc/asterisk/pjsip.conf
       - ./asterisk-config-file/queues.conf:/etc/asterisk/queues.conf
-      - ./asterisk-config-file/res_parking.conf:/etc/asterisk/res_parking.conf:ro
+      - ./asterisk-config-file/res_parking.conf:/etc/asterisk/res_parking.conf
       - ./asterisk-config-file/users.conf:/etc/asterisk/users.conf:ro
       - ./certs/asterisk.pem:/etc/asterisk/keys/asterisk.pem:ro
       - ./certs/asterisk.key:/etc/asterisk/keys/asterisk.key:ro
