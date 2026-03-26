@@ -27,6 +27,10 @@
                 <span class="softphone-status-text" style="color:@StatusColor;">@StatusText</span>
             </div>
             <div style="display:flex;align-items:center;gap:0.5rem;">
+                @if (Phone.ConnectedServerId is not null)
+                {
+                    <span class="softphone-server-id" title="@Phone.ConnectedServerId">@Phone.ConnectedServerId</span>
+                }
                 @if (Phone.Extension is not null)
                 {
                     <span class="softphone-ext">@Phone.Extension</span>
@@ -85,7 +89,11 @@
 @code {
     private bool _expanded;
 
-    protected override void OnInitialized() => Phone.OnStateChanged += Refresh;
+    protected override void OnInitialized()
+    {
+        Phone.OnStateChanged += Refresh;
+        ServerSvc.OnChanged += OnServerChanged;
+    }
 
     private void TogglePopup() => _expanded = !_expanded;
 
@@ -94,6 +102,20 @@
         var serverId = ServerSvc.SelectedServerId;
         if (serverId is null) return;
         await Phone.ConnectAsync(serverId);
+    }
+
+    private async void OnServerChanged()
+    {
+        var newServerId = ServerSvc.SelectedServerId;
+        if (newServerId is null) return;
+        if (Phone.ConnectedServerId == newServerId) return;
+        if (Phone.State == SoftphoneState.Unregistered) return;
+
+        await InvokeAsync(async () =>
+        {
+            await Phone.SwitchServerAsync(newServerId);
+            StateHasChanged();
+        });
     }
 
     private async Task HandleCall(string number) => await Phone.CallAsync(number);
@@ -133,5 +155,9 @@
 
     private async void Refresh() => await InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Phone.OnStateChanged -= Refresh;
+    public void Dispose()
+    {
+        Phone.OnStateChanged -= Refresh;
+        ServerSvc.OnChanged -= OnServerChanged;
+    }
 }

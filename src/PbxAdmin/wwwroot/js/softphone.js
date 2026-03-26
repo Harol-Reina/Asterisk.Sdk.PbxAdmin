@@ -12,6 +12,11 @@ window.Softphone = {
     _iceServers: [],
 
     async register(wssUrl, extension, password, displayName, dotNetRef, turnUrl, turnUsername, turnPassword) {
+        // Clean up previous UA if re-registering (server switch)
+        if (this._ua) {
+            await this.unregister();
+        }
+
         this._dotNetRef = dotNetRef;
         this._audioElement = document.getElementById("softphone-remote-audio");
         this._ringbackElement = document.getElementById("softphone-ringback");
@@ -193,6 +198,11 @@ window.Softphone = {
             if (this._registerer) await this._registerer.unregister();
             if (this._ua) await this._ua.stop();
         } catch (e) { /* cleanup best-effort */ }
+        // Restore original RTCPeerConnection if we patched it
+        if (this._origRTCPeerConnection) {
+            window.RTCPeerConnection = this._origRTCPeerConnection;
+            this._origRTCPeerConnection = null;
+        }
         this._ua = null;
         this._registerer = null;
         this._session = null;

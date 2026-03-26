@@ -8,6 +8,7 @@ namespace PbxAdmin.Services;
 /// <summary>
 /// Blazor ↔ JavaScript bridge for the embedded WebRTC softphone.
 /// Scoped per Blazor circuit — one instance per browser tab.
+/// Supports single active connection with credential caching for fast server switching.
 /// </summary>
 public sealed class SoftphoneService : IAsyncDisposable
 {
@@ -15,9 +16,12 @@ public sealed class SoftphoneService : IAsyncDisposable
     private readonly IToastService _toast;
     private readonly WebRtcProviderResolver _providerResolver;
     private readonly NavigationManager _navigation;
+    private readonly Dictionary<string, WebRtcCredentials> _credentialCache = new(StringComparer.OrdinalIgnoreCase);
     private DotNetObjectReference<SoftphoneService>? _dotNetRef;
+    private bool _switching;
 
     public SoftphoneState State { get; private set; } = SoftphoneState.Unregistered;
+    public string? ConnectedServerId { get; private set; }
     public string? Extension { get; private set; }
     public string? RemoteNumber { get; private set; }
     public string? RemoteName { get; private set; }
@@ -50,10 +54,21 @@ public sealed class SoftphoneService : IAsyncDisposable
         SetState(SoftphoneState.Registering);
         try
         {
-            var browserHost = new Uri(_navigation.Uri).Host;
-            var provider = _providerResolver.GetProvider(serverId);
-            var creds = await provider.ProvisionAsync(serverId, browserHost);
+            WebRtcCredentials creds;
+            if (_credentialCache.TryGetValue(serverId, out var cached))
+            {
+                creds = cached;
+            }
+            else
+            {
+                var browserHost = new Uri(_navigation.Uri).Host;
+                var provider = _providerResolver.GetProvider(serverId);
+                creds = await provider.ProvisionAsync(serverId, browserHost);
+                _credentialCache[serverId] = creds;
+            }
+
             Extension = creds.Extension;
+            ConnectedServerId = serverId;
             _dotNetRef = DotNetObjectReference.Create(this);
             await _js.InvokeVoidAsync("Softphone.register",
                 creds.WssUrl, creds.Extension, creds.Password, creds.Extension, _dotNetRef,
@@ -61,6 +76,7 @@ public sealed class SoftphoneService : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            ConnectedServerId = null;
             SetState(SoftphoneState.Unregistered);
             _toast.Show("Registration failed: " + ex.Message, ToastLevel.Error);
         }
@@ -71,7 +87,29 @@ public sealed class SoftphoneService : IAsyncDisposable
     {
         await _js.InvokeVoidAsync("Softphone.unregister");
         SetState(SoftphoneState.Unregistered);
+        ConnectedServerId = null;
         Extension = null;
+    }
+
+    /// <summary>
+    /// Disconnects from the current server and connects to the new one.
+    /// Uses cached credentials when available for instant reconnection.
+    /// </summary>
+    public async Task SwitchServerAsync(string newServerId)
+    {
+        if (_switching) return;
+        if (State is SoftphoneState.Unregistered or SoftphoneState.Registering) return;
+
+        _switching = true;
+        try
+        {
+            await DisconnectAsync();
+            await ConnectAsync(newServerId);
+        }
+        finally
+        {
+            _switching = false;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -139,6 +177,9 @@ public sealed class SoftphoneService : IAsyncDisposable
     [JSInvokable]
     public void OnRegistrationFailed(string reason)
     {
+        if (ConnectedServerId is not null)
+            _credentialCache.Remove(ConnectedServerId);
+        ConnectedServerId = null;
         SetState(SoftphoneState.Unregistered);
         _toast.Show("Registration failed", ToastLevel.Error, reason);
     }
