@@ -1,23 +1,30 @@
 #!/bin/sh
 # Entrypoint wrapper for Asterisk Docker containers.
-# Replaces ${EXTERNAL_IP} placeholders in pjsip.conf and rtp.conf
-# with the actual host IP for WebRTC NAT traversal.
+# Injects EXTERNAL_IP into pjsip.conf and appends ice_host_candidates
+# to rtp.conf so WebRTC ICE candidates use the host LAN IP.
 
-replace_placeholders() {
-    local file="$1"
-    [ ! -f "$file" ] && return
-    cp "$file" /tmp/_ast_tmp
-    if [ -n "$EXTERNAL_IP" ]; then
-        sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" /tmp/_ast_tmp > "$file"
-    else
-        grep -v '\${EXTERNAL_IP}' /tmp/_ast_tmp > "$file"
-    fi
-    rm -f /tmp/_ast_tmp
-}
+PJSIP_CONF="/etc/asterisk/pjsip.conf"
+RTP_CONF="/etc/asterisk/rtp.conf"
 
-replace_placeholders /etc/asterisk/pjsip.conf
-replace_placeholders /etc/asterisk/rtp.conf
+# Replace ${EXTERNAL_IP} placeholders in pjsip.conf
+if [ -n "$EXTERNAL_IP" ] && [ -f "$PJSIP_CONF" ]; then
+    cp "$PJSIP_CONF" /tmp/_pjsip_tmp
+    sed "s/\${EXTERNAL_IP}/$EXTERNAL_IP/g" /tmp/_pjsip_tmp > "$PJSIP_CONF"
+    rm -f /tmp/_pjsip_tmp
+fi
 
-echo "[entrypoint] EXTERNAL_IP=${EXTERNAL_IP:-<not set>}"
+# Append ice_host_candidates to rtp.conf
+# Maps container IP → host LAN IP so ICE candidates are reachable
+if [ -n "$EXTERNAL_IP" ] && [ -f "$RTP_CONF" ]; then
+    CONTAINER_IP=$(hostname -i | awk '{print $1}')
+    cat >> "$RTP_CONF" <<EOF
+
+[ice_host_candidates]
+${CONTAINER_IP} => ${EXTERNAL_IP}
+EOF
+    echo "[entrypoint] ice_host_candidates: ${CONTAINER_IP} => ${EXTERNAL_IP}"
+else
+    echo "[entrypoint] No EXTERNAL_IP set, WebRTC from remote machines may not work"
+fi
 
 exec /usr/sbin/asterisk -f

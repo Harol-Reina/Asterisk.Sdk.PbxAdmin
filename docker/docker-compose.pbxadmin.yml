@@ -1,10 +1,11 @@
 services:
-  # TURN/STUN relay for WebRTC NAT traversal.
-  # Asterisk and the browser both use this to relay media when direct
-  # connectivity fails (e.g. Docker NAT, remote networks).
+  # TURN relay — only needed for internet-facing deployments where
+  # ice_host_candidates is not enough (e.g., users behind CGNAT).
+  # Enable with: docker compose --profile turn up -d
   coturn:
     image: coturn/coturn:alpine
     container_name: demo-coturn
+    profiles: ["turn"]
     network_mode: host
     command:
       - --listening-port=3478
@@ -17,7 +18,6 @@ services:
       - --no-tls
       - --no-dtls
       - --log-file=stdout
-      - --verbose
       - --external-ip=${EXTERNAL_IP:-127.0.0.1}
       - --relay-ip=${EXTERNAL_IP:-127.0.0.1}
       - --listening-ip=0.0.0.0
@@ -219,9 +219,11 @@ services:
       - Asterisk__Servers__0__ExtensionRange__End=3999
       - Asterisk__Servers__0__WssPort=8089
       - Softphone__UseTls=true
-      - Softphone__TurnServer=turn:${EXTERNAL_IP:-127.0.0.1}:3478
-      - Softphone__TurnUsername=pbxadmin
-      - Softphone__TurnPassword=pbxadmin
+      # TURN config — only needed with 'turn' profile (coturn container).
+      # Uncomment if using: docker compose --profile turn up -d
+      # - Softphone__TurnServer=turn:${EXTERNAL_IP:-127.0.0.1}:3478
+      # - Softphone__TurnUsername=pbxadmin
+      # - Softphone__TurnPassword=pbxadmin
       # File-mode PBX (extensions 4XXX/5XXX, queues sales2/support2)
       - Asterisk__Servers__1__Id=pbx-file
       - Asterisk__Servers__1__Hostname=asterisk-file
