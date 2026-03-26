@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PbxAdmin\PbxAdmin.csproj" />
+    <ProjectReference Include="..\PbxAdmin.LoadTests\PbxAdmin.LoadTests.csproj" />
   </ItemGroup>
 
   <ItemGroup>
