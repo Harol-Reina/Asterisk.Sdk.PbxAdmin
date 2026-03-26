@@ -89,6 +89,18 @@ public sealed class PeakHourScenario : ITestScenario
         }
 
         await context.Scheduler.StopAsync();
+
+        int drainMaxSecs = context.AgentBehavior.TalkTimeSecs + context.AgentBehavior.WrapupTimeSecs + 10;
+        logger.LogInformation("[{Scenario}] Draining active calls (max {Secs}s)...", Name, drainMaxSecs);
+
+        var drainDeadline = DateTime.UtcNow.AddSeconds(drainMaxSecs);
+        while (DateTime.UtcNow < drainDeadline && !ct.IsCancellationRequested)
+        {
+            int active = context.AgentPool.InCallAgents + context.AgentPool.RingingAgents;
+            if (active == 0) break;
+            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+        }
+
         context.TestEndTime = DateTime.UtcNow;
 
         logger.LogInformation(
