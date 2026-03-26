@@ -1,0 +1,444 @@
+using Microsoft.Extensions.Logging;
+using PbxAdmin.LoadTests.Configuration;
+using SIPSorcery.Media;
+using SIPSorcery.SIP;
+using SIPSorcery.SIP.App;
+
+namespace PbxAdmin.LoadTests.AgentEmulation;
+
+/// <summary>
+/// Represents a single SIP endpoint that registers with Asterisk and handles calls.
+/// Designed to run up to 300 instances concurrently sharing a single SIPTransport.
+/// </summary>
+public sealed class SipAgent : IAsyncDisposable
+{
+    private readonly string _password;
+    private readonly string _serverHost;
+    private readonly int _serverPort;
+    private readonly SIPTransport _transport;
+    private readonly AgentBehaviorOptions _behavior;
+    private readonly ILogger _logger;
+
+    private SIPRegistrationUserAgent? _regAgent;
+    private SIPUserAgent? _userAgent;
+    private VoIPMediaSession? _mediaSession;
+
+    // Stores the pending INVITE request while the agent is in Ringing state,
+    // so that AnswerAsync() can call AcceptCall(request) with the correct invite.
+    private SIPRequest? _pendingInvite;
+
+    private CancellationTokenSource? _wrapupCts;
+    private AgentState _state = AgentState.Offline;
+
+    public string ExtensionId { get; }
+    public AgentState State => _state;
+    public int CallsHandled { get; private set; }
+    public DateTime? LastCallTime { get; private set; }
+
+    public event Action<SipAgent, AgentState>? StateChanged;
+
+    public SipAgent(
+        string extensionId,
+        string password,
+        string serverHost,
+        int serverPort,
+        SIPTransport sharedTransport,
+        AgentBehaviorOptions behavior,
+        ILogger logger)
+    {
+        ExtensionId = extensionId;
+        _password = password;
+        _serverHost = serverHost;
+        _serverPort = serverPort;
+        _transport = sharedTransport;
+        _behavior = behavior;
+        _logger = logger;
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /// <summary>Starts SIP registration with Asterisk.</summary>
+    public Task RegisterAsync(CancellationToken ct)
+    {
+        if (_state != AgentState.Offline && _state != AgentState.Error)
+        {
+            _logger.LogWarning("Agent {Ext}: RegisterAsync called in state {State}, ignoring", ExtensionId, _state);
+            return Task.CompletedTask;
+        }
+
+        TransitionTo(AgentState.Registering);
+
+        var aor = SIPURI.ParseSIPURI($"sip:{ExtensionId}@{_serverHost}:{_serverPort}");
+        var contactUri = SIPURI.ParseSIPURI($"sip:{ExtensionId}@0.0.0.0");
+
+        _regAgent = new SIPRegistrationUserAgent(
+            _transport,
+            outboundProxy: null,
+            sipAccountAOR: aor,
+            authUsername: ExtensionId,
+            password: _password,
+            realm: null,
+            registrarHost: $"{_serverHost}:{_serverPort}",
+            contactURI: contactUri,
+            expiry: 120,
+            customHeaders: null,
+            maxRegistrationAttemptTimeout: 5000,
+            registerFailureRetryInterval: 5,
+            maxRegisterAttempts: 3,
+            exitOnUnequivocalFailure: false);
+
+        _regAgent.RegistrationSuccessful += OnRegistrationSuccessful;
+        _regAgent.RegistrationFailed += OnRegistrationFailed;
+        _regAgent.RegistrationRemoved += OnRegistrationRemoved;
+        _regAgent.RegistrationTemporaryFailure += OnRegistrationTemporaryFailure;
+
+        // SIPUserAgent wraps the transport for call handling.
+        // isTransportExclusive: false — many agents share the same transport.
+        _userAgent = new SIPUserAgent(_transport, outboundProxy: null, isTransportExclusive: false, answerSipAccount: null);
+        _userAgent.OnIncomingCall += OnIncomingCall;
+        _userAgent.OnCallHungup += OnCallHungup;
+
+        _regAgent.Start();
+
+        _logger.LogInformation("Agent {Ext}: registration started → {Host}:{Port}", ExtensionId, _serverHost, _serverPort);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Stops registration and transitions to Offline.</summary>
+    public Task UnregisterAsync()
+    {
+        _regAgent?.Stop();
+        TransitionTo(AgentState.Offline);
+        _logger.LogInformation("Agent {Ext}: unregistered", ExtensionId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Answers the current ringing call.
+    /// Uses VoIPMediaSession which sends comfort noise when no audio source
+    /// is configured — appropriate for load testing without real audio.
+    /// </summary>
+    public async Task AnswerAsync()
+    {
+        if (_state != AgentState.Ringing || _userAgent is null || _pendingInvite is null)
+        {
+            _logger.LogWarning("Agent {Ext}: AnswerAsync called in state {State}, ignoring", ExtensionId, _state);
+            return;
+        }
+
+        await AnswerInviteAsync(_pendingInvite);
+    }
+
+    /// <summary>Puts the current call on hold.</summary>
+    public async Task HoldAsync()
+    {
+        if (_state != AgentState.InCall || _userAgent is null || _mediaSession is null)
+        {
+            _logger.LogWarning("Agent {Ext}: HoldAsync called in state {State}, ignoring", ExtensionId, _state);
+            return;
+        }
+
+        await _mediaSession.PutOnHold();
+        _userAgent.PutOnHold();
+        TransitionTo(AgentState.OnHold);
+        _logger.LogInformation("Agent {Ext}: call on hold", ExtensionId);
+    }
+
+    /// <summary>Takes the current call off hold.</summary>
+    public Task UnholdAsync()
+    {
+        if (_state != AgentState.OnHold || _userAgent is null || _mediaSession is null)
+        {
+            _logger.LogWarning("Agent {Ext}: UnholdAsync called in state {State}, ignoring", ExtensionId, _state);
+            return Task.CompletedTask;
+        }
+
+        _mediaSession.TakeOffHold();
+        _userAgent.TakeOffHold();
+        TransitionTo(AgentState.InCall);
+        _logger.LogInformation("Agent {Ext}: call resumed", ExtensionId);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Sends a DTMF digit on the current call.</summary>
+    public async Task SendDtmfAsync(byte tone)
+    {
+        if ((_state != AgentState.InCall && _state != AgentState.OnHold) || _userAgent is null)
+        {
+            _logger.LogWarning("Agent {Ext}: SendDtmfAsync called in state {State}, ignoring", ExtensionId, _state);
+            return;
+        }
+
+        await _userAgent.SendDtmf(tone);
+        _logger.LogDebug("Agent {Ext}: sent DTMF {Tone}", ExtensionId, tone);
+    }
+
+    /// <summary>Performs a blind transfer to the specified extension on the same server.</summary>
+    public async Task TransferAsync(string targetExtension)
+    {
+        if (_state != AgentState.InCall || _userAgent is null)
+        {
+            _logger.LogWarning("Agent {Ext}: TransferAsync called in state {State}, ignoring", ExtensionId, _state);
+            return;
+        }
+
+        var destination = SIPURI.ParseSIPURI($"sip:{targetExtension}@{_serverHost}:{_serverPort}");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        bool transferred = await _userAgent.BlindTransfer(destination, TimeSpan.FromSeconds(10), cts.Token);
+
+        if (transferred)
+        {
+            _logger.LogInformation("Agent {Ext}: blind transfer to {Target} succeeded", ExtensionId, targetExtension);
+            await CleanupCallAsync();
+            await BeginWrapupAsync();
+        }
+        else
+        {
+            _logger.LogWarning("Agent {Ext}: blind transfer to {Target} failed", ExtensionId, targetExtension);
+        }
+    }
+
+    /// <summary>Hangs up the current call and begins the wrapup timer.</summary>
+    public async Task HangupAsync()
+    {
+        if (_state != AgentState.InCall && _state != AgentState.OnHold && _state != AgentState.Ringing)
+        {
+            _logger.LogWarning("Agent {Ext}: HangupAsync called in state {State}, ignoring", ExtensionId, _state);
+            return;
+        }
+
+        _userAgent?.Hangup();
+        _pendingInvite = null;
+        await CleanupCallAsync();
+        await BeginWrapupAsync();
+        _logger.LogInformation("Agent {Ext}: call hung up", ExtensionId);
+    }
+
+    /// <summary>
+    /// Handles an incoming INVITE dispatched from the shared transport.
+    /// The SIPUserAgent.OnIncomingCall event routes here. Also callable directly
+    /// from a transport-level dispatcher when sharing transport across agents.
+    /// </summary>
+    internal async Task HandleIncomingInviteAsync(SIPRequest request)
+    {
+        if (_state != AgentState.Idle || _userAgent is null)
+        {
+            _logger.LogDebug("Agent {Ext}: ignoring INVITE in state {State}", ExtensionId, _state);
+            return;
+        }
+
+        _pendingInvite = request;
+        _logger.LogInformation("Agent {Ext}: INVITE received from {From}", ExtensionId, request.Header.From);
+        TransitionTo(AgentState.Ringing);
+
+        if (_behavior.AutoAnswer)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(_behavior.RingDelaySecs));
+
+            if (_state == AgentState.Ringing)
+            {
+                await AnswerAsync();
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_wrapupCts is not null)
+        {
+            await _wrapupCts.CancelAsync();
+            _wrapupCts.Dispose();
+        }
+        _wrapupCts = null;
+
+        _regAgent?.Stop();
+
+        if (_userAgent is not null)
+        {
+            _userAgent.OnIncomingCall -= OnIncomingCall;
+            _userAgent.OnCallHungup -= OnCallHungup;
+
+            if (_userAgent.IsCallActive)
+            {
+                _userAgent.Hangup();
+            }
+
+            _userAgent.Close();
+            _userAgent = null;
+        }
+
+        if (_mediaSession is not null)
+        {
+            _mediaSession.Close(null);
+            _mediaSession.Dispose();
+            _mediaSession = null;
+        }
+
+        await Task.CompletedTask;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private: registration event handlers
+    // -------------------------------------------------------------------------
+
+    private void OnRegistrationSuccessful(SIPURI uri, SIPResponse response)
+    {
+        TransitionTo(AgentState.Idle);
+        _logger.LogInformation("Agent {Ext}: registered successfully at {Uri}", ExtensionId, uri);
+    }
+
+    private void OnRegistrationFailed(SIPURI uri, SIPResponse? response, string reason)
+    {
+        TransitionTo(AgentState.Error);
+        _logger.LogError("Agent {Ext}: registration failed — {Reason}", ExtensionId, reason);
+    }
+
+    private void OnRegistrationRemoved(SIPURI uri, SIPResponse response)
+    {
+        if (_state == AgentState.Idle)
+        {
+            TransitionTo(AgentState.Offline);
+        }
+
+        _logger.LogWarning("Agent {Ext}: registration removed", ExtensionId);
+    }
+
+    private void OnRegistrationTemporaryFailure(SIPURI uri, SIPResponse? response, string reason)
+    {
+        _logger.LogWarning("Agent {Ext}: registration temporary failure — {Reason}", ExtensionId, reason);
+    }
+
+    // -------------------------------------------------------------------------
+    // Private: call event handlers
+    // -------------------------------------------------------------------------
+
+    private void OnIncomingCall(SIPUserAgent ua, SIPRequest request)
+    {
+        _ = HandleIncomingInviteAsync(request);
+    }
+
+    private void OnCallHungup(SIPDialogue dialogue)
+    {
+        _logger.LogInformation("Agent {Ext}: remote hangup", ExtensionId);
+        _ = CleanupCallAndWrapupAsync();
+    }
+
+    // -------------------------------------------------------------------------
+    // Private: call lifecycle helpers
+    // -------------------------------------------------------------------------
+
+    private async Task AnswerInviteAsync(SIPRequest request)
+    {
+        if (_userAgent is null) return;
+
+        try
+        {
+            var uas = _userAgent.AcceptCall(request);
+            _mediaSession = new VoIPMediaSession();
+            bool answered = await _userAgent.Answer(uas, _mediaSession, publicIpAddress: null);
+
+            if (answered)
+            {
+                await _mediaSession.Start();
+                _pendingInvite = null;
+                TransitionTo(AgentState.InCall);
+                CallsHandled++;
+                LastCallTime = DateTime.UtcNow;
+
+                _logger.LogInformation("Agent {Ext}: call answered (total: {Count})", ExtensionId, CallsHandled);
+
+                // Schedule auto-hangup after configured talk time
+                _ = AutoHangupAfterTalkTimeAsync();
+            }
+            else
+            {
+                _logger.LogWarning("Agent {Ext}: Answer() returned false — cleaning up", ExtensionId);
+                _pendingInvite = null;
+                await CleanupCallAsync();
+                TransitionTo(AgentState.Idle);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Agent {Ext}: error in AnswerInviteAsync", ExtensionId);
+            _pendingInvite = null;
+            await CleanupCallAsync();
+            TransitionTo(AgentState.Idle);
+        }
+    }
+
+    private async Task AutoHangupAfterTalkTimeAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(_behavior.TalkTimeSecs));
+
+        if (_state == AgentState.InCall || _state == AgentState.OnHold)
+        {
+            _logger.LogInformation("Agent {Ext}: talk time elapsed, hanging up", ExtensionId);
+            await HangupAsync();
+        }
+    }
+
+    private async Task BeginWrapupAsync()
+    {
+        TransitionTo(AgentState.Wrapup);
+
+        if (_wrapupCts is not null)
+        {
+            await _wrapupCts.CancelAsync();
+            _wrapupCts.Dispose();
+        }
+        _wrapupCts = new CancellationTokenSource();
+        var token = _wrapupCts.Token;
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(_behavior.WrapupTimeSecs), token);
+
+            if (!token.IsCancellationRequested)
+            {
+                TransitionTo(AgentState.Idle);
+                _logger.LogDebug("Agent {Ext}: wrapup complete, now idle", ExtensionId);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Wrapup cancelled — state managed externally (e.g. DisposeAsync)
+        }
+    }
+
+    private async Task CleanupCallAndWrapupAsync()
+    {
+        await CleanupCallAsync();
+        await BeginWrapupAsync();
+    }
+
+    private Task CleanupCallAsync()
+    {
+        if (_mediaSession is not null)
+        {
+            _mediaSession.Close(null);
+            _mediaSession.Dispose();
+            _mediaSession = null;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private: state machine
+    // -------------------------------------------------------------------------
+
+    private void TransitionTo(AgentState newState)
+    {
+        if (_state == newState) return;
+
+        var previous = _state;
+        _state = newState;
+        _logger.LogDebug("Agent {Ext}: {From} → {To}", ExtensionId, previous, newState);
+
+        StateChanged?.Invoke(this, newState);
+    }
+}
