@@ -125,7 +125,10 @@ static async Task<int> RunAsync(
 
 static IHost BuildHost()
 {
-    var builder = Host.CreateApplicationBuilder();
+    var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+    {
+        ContentRootPath = AppContext.BaseDirectory
+    });
     builder.Services.AddSerilog();
 
     builder.Services.Configure<LoadTestOptions>(
@@ -238,7 +241,9 @@ static async Task GenerateSmokeCallsAsync(
     MsLogger logger,
     CancellationToken ct)
 {
-    logger.LogInformation("Connecting to PSTN emulator and generating 5 smoke calls...");
+    logger.LogInformation("Connecting to PSTN emulator AMI at {Host}:{Port} as {User}...",
+        context.Options.PstnEmulatorAmi.Host, context.Options.PstnEmulatorAmi.Port,
+        context.Options.PstnEmulatorAmi.Username);
     try
     {
         await context.CallGenerator.ConnectAsync(ct);
