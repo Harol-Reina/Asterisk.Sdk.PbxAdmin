@@ -119,6 +119,8 @@ services:
   pstn-emulator:
     image: docker-asterisk-file:latest
     container_name: demo-pstn
+    ports:
+      - "5040:5038"
     depends_on:
       asterisk-realtime:
         condition: service_healthy
