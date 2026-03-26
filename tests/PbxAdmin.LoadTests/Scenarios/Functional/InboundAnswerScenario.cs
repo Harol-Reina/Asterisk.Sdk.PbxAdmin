@@ -5,28 +5,28 @@ using PbxAdmin.LoadTests.Validation.Layer3;
 namespace PbxAdmin.LoadTests.Scenarios.Functional;
 
 /// <summary>
-/// Generates 3 inbound calls to extension 200 (IVR → queue → agent answers)
+/// Generates 3 inbound calls to extension 105 (loadtest queue → agent answers)
 /// and validates that each call was answered, CDR is present, and CEL shows the
 /// expected event sequence.
 /// </summary>
 public sealed class InboundAnswerScenario : ITestScenario
 {
     public string Name => "inbound-answer";
-    public string Description => "3 inbound calls to IVR (ext 200) that route through queue to agent; validates CDR=ANSWERED and CEL sequence";
+    public string Description => "3 inbound calls to loadtest queue (ext 105) routed to agent; validates CDR=ANSWERED and CEL sequence";
 
     public async Task ExecuteAsync(TestContext context, CancellationToken ct)
     {
         var logger = context.LoggerFactory.CreateLogger<InboundAnswerScenario>();
         context.TestStartTime = DateTime.UtcNow;
 
-        logger.LogInformation("[{Scenario}] Generating 3 inbound calls to extension 200", Name);
+        logger.LogInformation("[{Scenario}] Generating 3 inbound calls to extension 105 (loadtest queue)", Name);
 
         try
         {
             for (int i = 0; i < 3; i++)
             {
                 ct.ThrowIfCancellationRequested();
-                var result = await context.CallGenerator.GenerateCallAsync("200", cancellationToken: ct);
+                var result = await context.CallGenerator.GenerateCallAsync("105", cancellationToken: ct);
                 context.EventCapture.RegisterCall(result.CallId, result.Caller.Number, result.Destination, result.Timestamp);
                 context.Metrics.RecordCallOriginated();
 

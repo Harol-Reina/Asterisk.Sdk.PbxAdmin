@@ -198,6 +198,19 @@ public sealed class AgentPoolService : IAsyncDisposable
 
     private async Task OnTransportRequestReceived(SIPEndPoint localSipEndPoint, SIPEndPoint remoteEndPoint, SIPRequest sipRequest)
     {
+        // When Asterisk's Queue app picks a winner, it CANCELs the other ringing agents.
+        // Transition those agents back to Idle immediately so they don't waste time
+        // trying to answer a call that's already gone.
+        if (sipRequest.Method == SIPMethodsEnum.CANCEL)
+        {
+            string? cancelToUser = sipRequest.Header.To?.ToURI?.User;
+            if (!string.IsNullOrEmpty(cancelToUser))
+            {
+                GetAgent(cancelToUser)?.CancelPendingCall();
+            }
+            return;
+        }
+
         if (sipRequest.Method != SIPMethodsEnum.INVITE)
             return;
 

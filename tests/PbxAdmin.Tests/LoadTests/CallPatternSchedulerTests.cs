@@ -46,15 +46,15 @@ public sealed class CallPatternSchedulerTests
     // -------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("NormalAnswer", "200")]
-    [InlineData("ShortCall", "200")]
-    [InlineData("LongCall", "200")]
-    [InlineData("Transfer", "200")]
-    [InlineData("Hold", "200")]
-    [InlineData("IvrNavigation", "200")]
-    [InlineData("NoAnswer", "200")]
-    [InlineData("Busy", "200")]
-    [InlineData("Voicemail", "200")]
+    [InlineData("NormalAnswer", "105")]
+    [InlineData("ShortCall", "105")]
+    [InlineData("LongCall", "105")]
+    [InlineData("Transfer", "105")]
+    [InlineData("Hold", "105")]
+    [InlineData("IvrNavigation", "105")]
+    [InlineData("NoAnswer", "105")]
+    [InlineData("Busy", "105")]
+    [InlineData("Voicemail", "105")]
     public void PickScenarioDestination_ShouldReturnDefaultDestination_ForNonConferenceScenario(
         string scenario, string expected)
     {

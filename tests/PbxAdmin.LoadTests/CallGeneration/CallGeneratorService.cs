@@ -170,7 +170,7 @@ public sealed class CallGeneratorService : IAsyncDisposable
         {
             Channel = $"Local/{destination}@{context}",
             Application = "Wait",
-            Data = "1",
+            Data = "300",
             IsAsync = true,
             ActionId = callId
         };

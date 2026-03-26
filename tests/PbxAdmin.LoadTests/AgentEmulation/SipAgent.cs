@@ -26,6 +26,7 @@ public sealed class SipAgent : IAsyncDisposable
     // Stores the pending INVITE request while the agent is in Ringing state,
     // so that AnswerAsync() can call AcceptCall(request) with the correct invite.
     private SIPRequest? _pendingInvite;
+    private volatile bool _inviteCancelled;
 
     private CancellationTokenSource? _wrapupCts;
     private AgentState _state = AgentState.Offline;
@@ -96,8 +97,12 @@ public sealed class SipAgent : IAsyncDisposable
 
         // SIPUserAgent wraps the transport for call handling.
         // isTransportExclusive: false — many agents share the same transport.
+        // IMPORTANT: Do NOT subscribe to OnIncomingCall. With a shared transport,
+        // every SIPUserAgent fires OnIncomingCall for ALL INVITEs (not just its own),
+        // causing all agents to try AcceptCall on the same INVITE → transaction conflicts.
+        // Instead, AgentPoolService.OnTransportRequestReceived dispatches INVITEs
+        // to the correct agent based on the To header.
         _userAgent = new SIPUserAgent(_transport, outboundProxy: null, isTransportExclusive: false, answerSipAccount: null);
-        _userAgent.OnIncomingCall += OnIncomingCall;
         _userAgent.OnCallHungup += OnCallHungup;
 
         _regAgent.Start();
@@ -231,6 +236,7 @@ public sealed class SipAgent : IAsyncDisposable
         }
 
         _pendingInvite = request;
+        _inviteCancelled = false;
         _logger.LogInformation("Agent {Ext}: INVITE received from {From}", ExtensionId, request.Header.From);
         TransitionTo(AgentState.Ringing);
 
@@ -238,11 +244,25 @@ public sealed class SipAgent : IAsyncDisposable
         {
             await Task.Delay(TimeSpan.FromSeconds(_behavior.RingDelaySecs));
 
-            if (_state == AgentState.Ringing)
+            if (_state == AgentState.Ringing && !_inviteCancelled)
             {
                 await AnswerAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// Called by AgentPoolService when a SIP CANCEL is received for this agent's
+    /// pending INVITE. Transitions back to Idle so the agent is available for new calls.
+    /// </summary>
+    internal void CancelPendingCall()
+    {
+        if (_state != AgentState.Ringing) return;
+
+        _inviteCancelled = true;
+        _pendingInvite = null;
+        TransitionTo(AgentState.Idle);
+        _logger.LogInformation("Agent {Ext}: call cancelled by remote", ExtensionId);
     }
 
     public async ValueTask DisposeAsync()
@@ -258,7 +278,6 @@ public sealed class SipAgent : IAsyncDisposable
 
         if (_userAgent is not null)
         {
-            _userAgent.OnIncomingCall -= OnIncomingCall;
             _userAgent.OnCallHungup -= OnCallHungup;
 
             if (_userAgent.IsCallActive)
@@ -314,11 +333,6 @@ public sealed class SipAgent : IAsyncDisposable
     // -------------------------------------------------------------------------
     // Private: call event handlers
     // -------------------------------------------------------------------------
-
-    private void OnIncomingCall(SIPUserAgent ua, SIPRequest request)
-    {
-        _ = HandleIncomingInviteAsync(request);
-    }
 
     private void OnCallHungup(SIPDialogue dialogue)
     {

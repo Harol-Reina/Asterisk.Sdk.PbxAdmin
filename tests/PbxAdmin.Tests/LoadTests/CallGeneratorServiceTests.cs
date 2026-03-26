@@ -109,7 +109,7 @@ public sealed class CallGeneratorServiceTests
         var action = CallGeneratorService.BuildOriginateAction("200", MobileCaller, "realtime", "test-005");
 
         action.Application.Should().Be("Wait");
-        action.Data.Should().Be("1");
+        action.Data.Should().Be("300");
     }
 
     [Fact]

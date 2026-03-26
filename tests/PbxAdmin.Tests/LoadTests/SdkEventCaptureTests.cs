@@ -91,17 +91,22 @@ public sealed class SdkEventCaptureTests
     }
 
     [Fact]
-    public void GetAllSnapshots_ShouldReturnEmpty_WhenCallsRegisteredButNotMatched()
+    public void GetAllSnapshots_ShouldReturnPendingCalls_WhenRegisteredButNotMatched()
     {
         var capture = CreateCapture();
 
         capture.RegisterCall("loadtest-000001", "573101234567", "200", BaseTime);
         capture.RegisterCall("loadtest-000002", "573109876543", "201", BaseTime.AddSeconds(5));
 
-        // No Newchannel events processed — nothing should be in snapshots
+        // No Newchannel events processed — pending calls are still included
+        // so that CDR/CEL database validation can use their CallerNumber
         var result = capture.GetAllSnapshots();
 
-        result.Should().BeEmpty();
+        result.Should().HaveCount(2);
+        result.Should().Contain(s => s.CallId == "loadtest-000001" && s.CallerNumber == "573101234567");
+        result.Should().Contain(s => s.CallId == "loadtest-000002" && s.CallerNumber == "573109876543");
+        result.Should().OnlyContain(s => s.UniqueId == null && s.LinkedId == null,
+            because: "pending calls have no AMI-matched unique/linked IDs");
     }
 
     // -------------------------------------------------------------------------

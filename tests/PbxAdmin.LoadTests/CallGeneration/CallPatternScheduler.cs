@@ -11,7 +11,7 @@ namespace PbxAdmin.LoadTests.CallGeneration;
 public sealed class CallPatternScheduler : IAsyncDisposable
 {
     private const string ConferenceDestination = "801";
-    private const string DefaultDestination = "2100";
+    private const string DefaultDestination = "105";
 
     private readonly CallPatternOptions _options;
     private readonly CallGeneratorService _generator;

@@ -38,7 +38,7 @@ services:
       - ./asterisk-config-realtime/ari.conf:/etc/asterisk/ari.conf:ro
       - ./asterisk-config-realtime/asterisk.conf:/etc/asterisk/asterisk.conf:ro
       - ./asterisk-config-realtime/cdr.conf:/etc/asterisk/cdr.conf:ro
-      - ./asterisk-config-realtime/cdr_odbc.conf:/etc/asterisk/cdr_odbc.conf:ro
+      - ./asterisk-config-realtime/cdr_adaptive_odbc.conf:/etc/asterisk/cdr_adaptive_odbc.conf:ro
       - ./asterisk-config-realtime/cel.conf:/etc/asterisk/cel.conf:ro
       - ./asterisk-config-realtime/cel_odbc.conf:/etc/asterisk/cel_odbc.conf:ro
       - ./asterisk-config-realtime/confbridge.conf:/etc/asterisk/confbridge.conf

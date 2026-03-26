@@ -194,4 +194,68 @@ public class DialplanGeneratorTests
         lines.Should().ContainSingle(l => l.Context == "tc-horario-closed")
             .Which.AppData.Should().Be("default,1099,1");
     }
+
+    // --- Queue Context ---
+
+    [Fact]
+    public void Generate_ShouldCreateQueuesContext_WhenInboundRouteTargetsQueue()
+    {
+        var data = new DialplanData(
+            [new InboundRouteConfig { DidPattern = "5551000", DestinationType = "queue", Destination = "sales", Priority = 1, Enabled = true }],
+            [], []);
+        var lines = DialplanGenerator.Generate(data).Where(l => l.Context == "queues" && l.Exten == "sales").ToList();
+        lines.Should().HaveCount(3);
+        lines.Should().Contain(l => l.Priority == 1 && l.App == "Answer");
+        lines.Should().Contain(l => l.Priority == 2 && l.App == "Queue" && l.AppData == "sales,,,,300");
+        lines.Should().Contain(l => l.Priority == 3 && l.App == "Hangup");
+    }
+
+    [Fact]
+    public void Generate_ShouldCreateQueuesContext_WhenIvrMenuItemTargetsQueue()
+    {
+        var menu = new IvrMenuConfig
+        {
+            Id = 1, ServerId = "srv1", Name = "main", Label = "Main Menu",
+            Greeting = "welcome", Timeout = 5, MaxRetries = 3, Enabled = true,
+            Items = [new IvrMenuItemConfig { Digit = "1", DestType = "queue", DestTarget = "support" }]
+        };
+        var data = new DialplanData([], [], [], [menu]);
+        var lines = DialplanGenerator.Generate(data).Where(l => l.Context == "queues" && l.Exten == "support").ToList();
+        lines.Should().HaveCount(3);
+        lines.Should().Contain(l => l.Priority == 1 && l.App == "Answer");
+        lines.Should().Contain(l => l.Priority == 2 && l.App == "Queue" && l.AppData == "support,,,,300");
+        lines.Should().Contain(l => l.Priority == 3 && l.App == "Hangup");
+    }
+
+    [Fact]
+    public void Generate_ShouldCreateQueuesContext_WhenTimeConditionTargetsQueue()
+    {
+        var tc = new TimeConditionConfig
+        {
+            Name = "horario", MatchDestType = "queue", MatchDest = "sales",
+            NoMatchDestType = "queue", NoMatchDest = "after-hours", Enabled = true,
+            Ranges = [new TimeRangeEntry { DayOfWeek = DayOfWeek.Monday, StartTime = new TimeOnly(9, 0), EndTime = new TimeOnly(18, 0) }],
+        };
+        var data = new DialplanData([], [], [tc]);
+        var lines = DialplanGenerator.Generate(data).Where(l => l.Context == "queues").ToList();
+        lines.Select(l => l.Exten).Distinct().Should().BeEquivalentTo("after-hours", "sales");
+        lines.Where(l => l.Exten == "sales").Should().HaveCount(3);
+        lines.Where(l => l.Exten == "after-hours").Should().HaveCount(3);
+    }
+
+    [Fact]
+    public void Generate_ShouldNotDuplicateQueues_WhenMultipleSourcesTargetSameQueue()
+    {
+        var menu = new IvrMenuConfig
+        {
+            Id = 1, ServerId = "srv1", Name = "main", Label = "Main Menu",
+            Greeting = "welcome", Timeout = 5, MaxRetries = 3, Enabled = true,
+            Items = [new IvrMenuItemConfig { Digit = "1", DestType = "queue", DestTarget = "sales" }]
+        };
+        var data = new DialplanData(
+            [new InboundRouteConfig { DidPattern = "5551000", DestinationType = "queue", Destination = "sales", Priority = 1, Enabled = true }],
+            [], [], [menu]);
+        var lines = DialplanGenerator.Generate(data).Where(l => l.Context == "queues" && l.Exten == "sales").ToList();
+        lines.Should().HaveCount(3);
+    }
 }

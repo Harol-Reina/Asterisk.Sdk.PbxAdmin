@@ -14,6 +14,7 @@ internal static class DialplanGenerator
         GenerateTimeConditions(data.TimeConditions, lines);
         if (data.IvrMenus is not null)
             GenerateIvrMenus(data.IvrMenus, lines);
+        GenerateQueueContext(data, lines);
         return lines;
     }
 
@@ -139,6 +140,32 @@ internal static class DialplanGenerator
                 lines.Add(new DialplanLine(ctx, "i", iPrio, "Goto", ResolveDestination(menu.InvalidDestType, menu.InvalidDest)));
             else
                 lines.Add(new DialplanLine(ctx, "i", iPrio, "Hangup", ""));
+        }
+    }
+
+    private static void GenerateQueueContext(DialplanData data, List<DialplanLine> lines)
+    {
+        var queueNames = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var route in data.InboundRoutes.Where(r => r.Enabled && r.DestinationType == "queue"))
+            queueNames.Add(route.Destination);
+
+        foreach (var tc in data.TimeConditions.Where(c => c.Enabled))
+        {
+            if (tc.MatchDestType == "queue") queueNames.Add(tc.MatchDest);
+            if (tc.NoMatchDestType == "queue") queueNames.Add(tc.NoMatchDest);
+        }
+
+        if (data.IvrMenus is not null)
+            foreach (var menu in data.IvrMenus.Where(m => m.Enabled))
+                foreach (var item in menu.Items.Where(i => i.DestType == "queue"))
+                    queueNames.Add(item.DestTarget);
+
+        foreach (var name in queueNames.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            lines.Add(new DialplanLine("queues", name, 1, "Answer", ""));
+            lines.Add(new DialplanLine("queues", name, 2, "Queue", $"{name},,,,300"));
+            lines.Add(new DialplanLine("queues", name, 3, "Hangup", ""));
         }
     }
 

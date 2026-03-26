@@ -132,9 +132,17 @@ public sealed class SdkEventCapture : IAsyncDisposable
         return BuildSnapshot(state);
     }
 
-    /// <summary>Returns snapshots for all calls that have been matched to a Newchannel event.</summary>
+    /// <summary>
+    /// Returns snapshots for all tracked calls. Includes both calls matched to AMI
+    /// Newchannel events (full data) and pending calls that were registered but not
+    /// yet matched (partial data — enough for CDR/CEL database validation).
+    /// </summary>
     public List<SdkSnapshot> GetAllSnapshots()
-        => [.. _stateByUniqueId.Values.Select(BuildSnapshot)];
+    {
+        var matched = _stateByUniqueId.Values.Select(BuildSnapshot);
+        var pending = _pendingByCallerNum.Values.Select(BuildPendingSnapshot);
+        return [.. matched, .. pending];
+    }
 
     /// <summary>Unsubscribes from AMI events.</summary>
     public void StopCapturing()
@@ -372,6 +380,16 @@ public sealed class SdkEventCapture : IAsyncDisposable
         evt.RawFields.TryGetValue(fieldName, out var value);
         return value ?? "";
     }
+
+    private static SdkSnapshot BuildPendingSnapshot(PendingCall pending) => new()
+    {
+        CallId = pending.CallId,
+        CallerNumber = pending.CallerNumber,
+        Destination = pending.Destination,
+        StartTime = pending.StartTime,
+        EventCount = 0,
+        Events = []
+    };
 
     private static SdkSnapshot BuildSnapshot(CallState state)
     {
