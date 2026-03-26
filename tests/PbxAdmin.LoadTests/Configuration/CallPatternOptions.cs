@@ -11,7 +11,7 @@ public sealed class CallPatternOptions
     public int MaxCallDurationSecs { get; init; } = 900;
     public bool BurstMode { get; init; }
     public int RampUpMinutes { get; init; } = 5;
-    public int TestDurationMinutes { get; init; } = 60;
+    public int TestDurationMinutes { get; set; } = 60;
     public Dictionary<string, int> ScenarioMix { get; init; } = new()
     {
         ["NormalAnswer"] = 60,

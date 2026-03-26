@@ -2,6 +2,8 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: demo-postgres
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: asterisk
       POSTGRES_USER: asterisk

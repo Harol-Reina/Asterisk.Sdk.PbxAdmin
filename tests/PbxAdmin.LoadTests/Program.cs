@@ -89,19 +89,49 @@ static async Task<int> RunAsync(
 
     PrintBanner(scenario, agents, target, durationMinutes, outputPath);
 
-    if (!string.Equals(scenario, "smoke", StringComparison.OrdinalIgnoreCase))
+    var testScenario = ScenarioRegistry.Get(scenario);
+    if (testScenario is null)
     {
-        logger.LogError("Scenario '{Scenario}' is not implemented yet. Only 'smoke' is available.", scenario);
+        logger.LogError("Unknown scenario '{Scenario}'. Available: {Names}",
+            scenario, string.Join(", ", ScenarioRegistry.Names));
         return 1;
     }
 
+    // CLI --duration overrides appsettings.json TestDurationMinutes
+    host.Services.GetRequiredService<IOptions<CallPatternOptions>>().Value.TestDurationMinutes = durationMinutes;
+
     var context = BuildTestContext(host, loggerFactory);
+
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    cts.CancelAfter(TimeSpan.FromMinutes(durationMinutes + 2));
+    cts.CancelAfter(TimeSpan.FromMinutes(durationMinutes + 5));
 
     try
     {
-        return await RunSmokeAsync(context, agents, outputPath, logger, cts.Token);
+        // Start agents + PSTN emulator connection
+        await StartAgentsAsync(context, agents, logger, cts.Token);
+        await ConnectPstnEmulatorAsync(context, logger, cts.Token);
+
+        // Execute scenario
+        logger.LogInformation("Executing scenario: {Name} — {Description}", testScenario.Name, testScenario.Description);
+        await testScenario.ExecuteAsync(context, cts.Token);
+
+        // Validate
+        logger.LogInformation("Validating results...");
+        var report = await testScenario.ValidateAsync(context, cts.Token);
+
+        var elapsed = context.TestEndTime - context.TestStartTime;
+        var metrics = context.Metrics.GetSummary(elapsed);
+        ReportGenerator.WriteConsoleReport(report, metrics);
+
+        if (!string.IsNullOrWhiteSpace(outputPath))
+        {
+            ReportGenerator.WriteJsonReport(report, metrics, outputPath);
+            logger.LogInformation("JSON report written to {Path}", outputPath);
+        }
+
+        var passed = report.FailedChecks == 0;
+        logger.LogInformation("Scenario {Name} completed. Result={Result}", testScenario.Name, passed ? "PASSED" : "FAILED");
+        return passed ? 0 : 1;
     }
     catch (OperationCanceledException ex)
     {
@@ -110,7 +140,7 @@ static async Task<int> RunAsync(
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Unhandled exception during smoke scenario.");
+        logger.LogError(ex, "Unhandled exception during scenario '{Scenario}'.", scenario);
         return 1;
     }
     finally
@@ -183,39 +213,7 @@ static TestContext BuildTestContext(IHost host, ILoggerFactory loggerFactory) =>
         LoggerFactory = loggerFactory
     };
 
-// ─── Smoke scenario ───────────────────────────────────────────────────────────
-
-static async Task<int> RunSmokeAsync(
-    TestContext context,
-    int agents,
-    string? outputPath,
-    MsLogger logger,
-    CancellationToken ct)
-{
-    logger.LogInformation("Smoke scenario: {Agents} agents — starting", agents);
-    context.TestStartTime = DateTime.UtcNow;
-
-    await StartAgentsAsync(context, agents, logger, ct);
-    await GenerateSmokeCallsAsync(context, logger, ct);
-
-    context.TestEndTime = DateTime.UtcNow;
-
-    var elapsed = context.TestEndTime - context.TestStartTime;
-    var metrics = context.Metrics.GetSummary(elapsed);
-    var report = BuildSmokeReport(context, metrics);
-
-    ReportGenerator.WriteConsoleReport(report, metrics);
-
-    if (!string.IsNullOrWhiteSpace(outputPath))
-    {
-        ReportGenerator.WriteJsonReport(report, metrics, outputPath);
-        logger.LogInformation("JSON report written to {Path}", outputPath);
-    }
-
-    bool passed = report.FailedChecks == 0 && report.SdkBugsFound.Count == 0;
-    logger.LogInformation("Smoke scenario completed. Result={Result}", passed ? "PASSED" : "FAILED");
-    return passed ? 0 : 1;
-}
+// ─── Helper methods ──────────────────────────────────────────────────────────
 
 static async Task StartAgentsAsync(
     TestContext context,
@@ -236,68 +234,22 @@ static async Task StartAgentsAsync(
     }
 }
 
-static async Task GenerateSmokeCallsAsync(
+static async Task ConnectPstnEmulatorAsync(
     TestContext context,
     MsLogger logger,
     CancellationToken ct)
 {
-    logger.LogInformation("Connecting to PSTN emulator AMI at {Host}:{Port} as {User}...",
-        context.Options.PstnEmulatorAmi.Host, context.Options.PstnEmulatorAmi.Port,
-        context.Options.PstnEmulatorAmi.Username);
+    logger.LogInformation("Connecting to PSTN emulator AMI at {Host}:{Port}...",
+        context.Options.PstnEmulatorAmi.Host, context.Options.PstnEmulatorAmi.Port);
     try
     {
         await context.CallGenerator.ConnectAsync(ct);
-        await OriginateSmokeCallsAsync(context, logger, ct);
-
-        await Task.Delay(TimeSpan.FromSeconds(3), ct);
-
-        for (int i = 0; i < context.Metrics.CallsAnswered; i++)
-            context.Metrics.RecordCallEnded();
     }
     catch (Exception ex)
     {
-        logger.LogWarning(ex, "Call generation failed (Docker stack may not be running)");
+        logger.LogWarning(ex, "PSTN emulator connection failed — call generation will not work");
     }
 }
-
-static async Task OriginateSmokeCallsAsync(
-    TestContext context,
-    MsLogger logger,
-    CancellationToken ct)
-{
-    for (int i = 0; i < 5; i++)
-    {
-        var result = await context.CallGenerator.GenerateCallAsync("200", cancellationToken: ct);
-        context.Metrics.RecordCallOriginated();
-        if (result.Accepted)
-        {
-            context.Metrics.RecordCallAnswered();
-            context.Metrics.RecordCallStarted();
-            logger.LogDebug("Call {I}/5 accepted: {CallId}", i + 1, result.CallId);
-        }
-        else
-        {
-            context.Metrics.RecordCallFailed();
-            logger.LogWarning("Call {I}/5 rejected: {Error}", i + 1, result.ErrorMessage);
-        }
-    }
-    logger.LogInformation("Smoke calls originated: {Answered} answered, {Failed} failed",
-        context.Metrics.CallsAnswered, context.Metrics.CallsFailed);
-}
-
-static ValidationReport BuildSmokeReport(TestContext context, MetricsSummary metrics) =>
-    new()
-    {
-        TestStart = context.TestStartTime,
-        TestEnd = context.TestEndTime,
-        Duration = context.TestEndTime - context.TestStartTime,
-        TotalCalls = metrics.CallsOriginated,
-        TotalChecks = 1,
-        PassedChecks = 1,
-        FailedChecks = 0,
-        Results = [],
-        SdkBugsFound = []
-    };
 
 // ─── Banner ───────────────────────────────────────────────────────────────────
 
