@@ -27,7 +27,8 @@ public sealed class AgentPoolService : IAsyncDisposable
     // Readiness gate configuration
     internal const int MinReadyPercent = 80;
     internal const int MaxRetryWaves = 2;
-    internal const int ReadinessSettleDelaySecs = 10;
+    internal const int ReadinessTimeoutSecs = 60;
+    internal const int ReadinessPollIntervalSecs = 2;
 
     public AgentPoolService(
         IOptions<LoadTestOptions> loadOptions,
@@ -141,15 +142,15 @@ public sealed class AgentPoolService : IAsyncDisposable
             await Task.WhenAll(batch.Select(a => a.RegisterAsync(ct)));
         }
 
-        // Wait for agents to register and retry failures
-        await WaitForReadyAsync(ct);
-
-        // Wire metrics for every agent (survives scenario-driven restarts)
+        // Wire metrics and mark started before readiness gate so state
+        // transitions are tracked even if the gate fails
         _metrics?.SetTotalAgents(agentCount);
         foreach (var agent in _agents)
             WireAgentMetrics(agent);
-
         _started = true;
+
+        // Wait for agents to register and retry failures
+        await WaitForReadyAsync(ct);
 
         int idle = IdleAgents;
         int errors = _agents.Count(a => a.State == AgentState.Error);
@@ -179,18 +180,65 @@ public sealed class AgentPoolService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits for agents to finish registering, retries agents in Error state,
+    /// Polls agent state until enough are Idle, retries agents in Error state,
     /// and ensures a minimum percentage of agents are Idle before returning.
     /// </summary>
     private async Task WaitForReadyAsync(CancellationToken ct)
     {
-        // Phase 1: Wait for initial registrations to settle
-        _logger.LogInformation("Waiting {Secs}s for registrations to settle...", ReadinessSettleDelaySecs);
-        await Task.Delay(TimeSpan.FromSeconds(ReadinessSettleDelaySecs), ct);
+        int total = TotalAgents;
 
-        LogReadinessStatus("Initial registration");
+        // Phase 1: Poll until agents settle (Idle or Error, not Registering)
+        _logger.LogInformation("Waiting up to {Secs}s for {N} agents to register (polling every {Poll}s)...",
+            ReadinessTimeoutSecs, total, ReadinessPollIntervalSecs);
+
+        await PollUntilSettledAsync(total, "Initial registration", ct);
+        LogReadinessStatus("After initial wait");
 
         // Phase 2: Retry waves for agents stuck in Error
+        await RetryErrorAgentsAsync(ct);
+
+        // Phase 3: Final readiness check
+        int finalIdle = IdleAgents;
+        int finalReadyPercent = total > 0 ? finalIdle * 100 / total : 0;
+
+        if (finalReadyPercent < MinReadyPercent)
+        {
+            int errors = _agents.Count(a => a.State == AgentState.Error);
+            int registering = _agents.Count(a => a.State == AgentState.Registering);
+
+            throw new InvalidOperationException(
+                $"Agent readiness check failed: {finalIdle}/{total} agents Idle ({finalReadyPercent}%), " +
+                $"minimum required {MinReadyPercent}%. " +
+                $"({errors} Error, {registering} still Registering)");
+        }
+
+        _logger.LogInformation(
+            "Readiness gate passed: {Idle}/{Total} agents Idle ({Percent}%)",
+            finalIdle, total, finalReadyPercent);
+    }
+
+    private async Task PollUntilSettledAsync(int total, string phase, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(ReadinessTimeoutSecs);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(TimeSpan.FromSeconds(ReadinessPollIntervalSecs), ct);
+
+            int idle = IdleAgents;
+            int registering = _agents.Count(a => a.State == AgentState.Registering);
+            int readyPercent = total > 0 ? idle * 100 / total : 0;
+
+            if (registering == 0 || readyPercent >= MinReadyPercent)
+            {
+                LogReadinessStatus(phase);
+                return;
+            }
+        }
+    }
+
+    private async Task RetryErrorAgentsAsync(CancellationToken ct)
+    {
         for (int wave = 1; wave <= MaxRetryWaves; wave++)
         {
             var errorAgents = _agents.Where(a => a.State == AgentState.Error).ToList();
@@ -200,7 +248,6 @@ public sealed class AgentPoolService : IAsyncDisposable
                 "Retry wave {Wave}/{Max}: re-registering {Count} agents in Error state",
                 wave, MaxRetryWaves, errorAgents.Count);
 
-            // Re-register error agents in small batches (10 at a time for retries)
             const int retryBatchSize = 10;
             for (int i = 0; i < errorAgents.Count; i += retryBatchSize)
             {
@@ -209,32 +256,8 @@ public sealed class AgentPoolService : IAsyncDisposable
                 await Task.WhenAll(batch.Select(a => a.RetryRegisterAsync(ct)));
             }
 
-            // Wait for retry registrations to settle
-            _logger.LogInformation("Waiting {Secs}s for retry wave {Wave} to settle...", ReadinessSettleDelaySecs, wave);
-            await Task.Delay(TimeSpan.FromSeconds(ReadinessSettleDelaySecs), ct);
-
-            LogReadinessStatus($"Retry wave {wave}");
+            await PollUntilSettledAsync(TotalAgents, $"Retry wave {wave}", ct);
         }
-
-        // Phase 3: Final readiness check
-        int idle = IdleAgents;
-        int total = TotalAgents;
-        int readyPercent = total > 0 ? idle * 100 / total : 0;
-
-        if (readyPercent < MinReadyPercent)
-        {
-            int errors = _agents.Count(a => a.State == AgentState.Error);
-            int registering = _agents.Count(a => a.State == AgentState.Registering);
-
-            throw new InvalidOperationException(
-                $"Agent readiness check failed: {idle}/{total} agents Idle ({readyPercent}%), " +
-                $"minimum required {MinReadyPercent}%. " +
-                $"({errors} Error, {registering} still Registering)");
-        }
-
-        _logger.LogInformation(
-            "Readiness gate passed: {Idle}/{Total} agents Idle ({Percent}%)",
-            idle, total, readyPercent);
     }
 
     private void LogReadinessStatus(string phase)

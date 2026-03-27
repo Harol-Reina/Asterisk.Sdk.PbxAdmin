@@ -289,8 +289,14 @@ public sealed class AgentPoolServiceTests
     }
 
     [Fact]
-    public void ReadinessSettleDelaySecs_ShouldDefaultTo10()
+    public void ReadinessTimeoutSecs_ShouldDefaultTo60()
     {
-        AgentPoolService.ReadinessSettleDelaySecs.Should().Be(10);
+        AgentPoolService.ReadinessTimeoutSecs.Should().Be(60);
+    }
+
+    [Fact]
+    public void ReadinessPollIntervalSecs_ShouldDefaultTo2()
+    {
+        AgentPoolService.ReadinessPollIntervalSecs.Should().Be(2);
     }
 }
