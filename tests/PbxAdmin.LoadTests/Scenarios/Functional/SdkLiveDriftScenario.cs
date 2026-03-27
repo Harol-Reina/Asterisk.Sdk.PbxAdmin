@@ -212,7 +212,7 @@ public sealed class SdkLiveDriftScenario : ITestScenario
                 .OrderBy(s => s.Timestamp)
                 .TakeLast(3)
                 .ToList();
-            drainedToZero = lastThree.All(s => s.SdkChannelCount == 0);
+            drainedToZero = lastThree.All(s => s.SdkChannelCount == 0 && s.AsteriskChannelCount == 0);
         }
         else
         {
@@ -232,7 +232,7 @@ public sealed class SdkLiveDriftScenario : ITestScenario
                     Passed = drainedToZero,
                     Expected = "Last 3 samples show 0 channels",
                     Actual = samples.Count >= 3
-                        ? string.Join(", ", samples.OrderBy(s => s.Timestamp).TakeLast(3).Select(s => s.SdkChannelCount))
+                        ? string.Join(", ", samples.OrderBy(s => s.Timestamp).TakeLast(3).Select(s => $"SDK={s.SdkChannelCount}/AST={s.AsteriskChannelCount}"))
                         : $"Only {samples.Count} samples available",
                     Message = drainedToZero ? null : "SDK did not drain to 0 channels after test - possible channel leak or insufficient drain time"
                 }

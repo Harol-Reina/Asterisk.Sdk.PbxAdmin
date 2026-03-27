@@ -40,11 +40,7 @@ public sealed class LiveStateValidator : IAsyncDisposable
     public async Task StopAsync()
     {
         if (_cts is not null)
-        {
             await _cts.CancelAsync();
-            _cts.Dispose();
-            _cts = null;
-        }
 
         if (_samplingLoop is not null)
         {
@@ -59,6 +55,9 @@ public sealed class LiveStateValidator : IAsyncDisposable
 
             _samplingLoop = null;
         }
+
+        _cts?.Dispose();
+        _cts = null;
     }
 
     public async ValueTask DisposeAsync()
