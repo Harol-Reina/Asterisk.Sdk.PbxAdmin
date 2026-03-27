@@ -137,7 +137,16 @@ static async Task<int> RunAsync(
     if (talkTime.HasValue)
     {
         agentBehaviorOpts.TalkTimeSecs = talkTime.Value;
-        logger.LogInformation("CLI override: TalkTimeSecs = {Value}s", talkTime.Value);
+
+        // Sync scheduler slot duration with agent talk time so the scheduler
+        // releases slots when agents actually hang up, not before or after.
+        int totalCycleSecs = talkTime.Value + agentBehaviorOpts.RingDelaySecs + agentBehaviorOpts.WrapupTimeSecs;
+        callPatternOpts.DefaultCallDurationSecs = totalCycleSecs;
+        callPatternOpts.MinCallDurationSecs = totalCycleSecs;
+        callPatternOpts.MaxCallDurationSecs = totalCycleSecs;
+
+        logger.LogInformation("CLI override: TalkTimeSecs={Talk}s, scheduler slot synced to {Cycle}s (talk+ring+wrapup)",
+            talkTime.Value, totalCycleSecs);
     }
 
     var context = BuildTestContext(host, loggerFactory);

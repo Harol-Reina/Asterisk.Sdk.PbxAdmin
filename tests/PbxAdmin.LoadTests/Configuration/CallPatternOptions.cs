@@ -6,9 +6,9 @@ public sealed class CallPatternOptions
 
     public int CallsPerMinute { get; set; } = 100;
     public int MaxConcurrentCalls { get; set; } = 300;
-    public int DefaultCallDurationSecs { get; init; } = 180;
-    public int MinCallDurationSecs { get; init; } = 30;
-    public int MaxCallDurationSecs { get; init; } = 900;
+    public int DefaultCallDurationSecs { get; set; } = 180;
+    public int MinCallDurationSecs { get; set; } = 30;
+    public int MaxCallDurationSecs { get; set; } = 900;
     public bool BurstMode { get; init; }
     public int RampUpMinutes { get; init; } = 5;
     public int TestDurationMinutes { get; set; } = 60;
