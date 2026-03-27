@@ -224,29 +224,10 @@ static async Task StartAgentsAsync(
     logger.LogInformation("Registering {N} SIP agents...", agents);
     try
     {
+        // Attach metrics BEFORE StartAsync so agent state transitions are tracked
+        // even when scenarios call StartAsync again (chaos/load scenarios do this)
+        context.AgentPool.AttachMetrics(context.Metrics);
         await context.AgentPool.StartAsync(agents, ct);
-
-        // Wire agent state transitions to MetricsCollector for peak tracking
-        context.Metrics.SetTotalAgents(context.AgentPool.TotalAgents);
-        foreach (var agent in context.AgentPool.Agents)
-        {
-            agent.StateChanged += (a, newState) =>
-            {
-                switch (newState)
-                {
-                    case AgentState.InCall:
-                        context.Metrics.RecordAgentBusy();
-                        context.Metrics.RecordCallAnswered();
-                        break;
-                    case AgentState.Wrapup or AgentState.Idle when a.State == AgentState.InCall || a.State == AgentState.OnHold:
-                        context.Metrics.RecordAgentFree();
-                        break;
-                    case AgentState.Error:
-                        context.Metrics.RecordAgentError();
-                        break;
-                }
-            };
-        }
 
         logger.LogInformation("Agent pool ready: {Total} total, {Idle} idle",
             context.AgentPool.TotalAgents, context.AgentPool.IdleAgents);

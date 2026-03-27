@@ -98,7 +98,7 @@ public sealed class SipAgentTests
     {
         var agent = CreateAgent();
         var states = new List<AgentState>();
-        agent.StateChanged += (_, s) => states.Add(s);
+        agent.StateChanged += (_, _, s) => states.Add(s);
 
         await agent.RegisterAsync(CancellationToken.None);
 
@@ -113,7 +113,7 @@ public sealed class SipAgentTests
         var agent = CreateAgent();
         await agent.RegisterAsync(CancellationToken.None);
         var statesAfterSecondCall = new List<AgentState>();
-        agent.StateChanged += (_, s) => statesAfterSecondCall.Add(s);
+        agent.StateChanged += (_, _, s) => statesAfterSecondCall.Add(s);
 
         // Second call while already registering should be a no-op (no state change).
         await agent.RegisterAsync(CancellationToken.None);
@@ -164,7 +164,7 @@ public sealed class SipAgentTests
         ForceIdleState(agent);
 
         AgentState? captured = null;
-        agent.StateChanged += (_, s) => captured = s;
+        agent.StateChanged += (_, _, s) => captured = s;
 
         await agent.HandleIncomingInviteAsync(BuildFakeInvite("1001"));
 
@@ -226,7 +226,7 @@ public sealed class SipAgentTests
     {
         var agent = CreateAgent();
         AgentState? observed = null;
-        agent.StateChanged += (_, s) => observed = s;
+        agent.StateChanged += (_, _, s) => observed = s;
 
         await agent.RegisterAsync(CancellationToken.None);
 
@@ -238,7 +238,7 @@ public sealed class SipAgentTests
     {
         var agent = CreateAgent();
         SipAgent? receivedAgent = null;
-        agent.StateChanged += (a, _) => receivedAgent = a;
+        agent.StateChanged += (a, _, _) => receivedAgent = a;
 
         await agent.RegisterAsync(CancellationToken.None);
 

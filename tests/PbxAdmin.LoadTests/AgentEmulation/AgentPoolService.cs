@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PbxAdmin.LoadTests.Configuration;
+using PbxAdmin.LoadTests.Metrics;
 using SIPSorcery.SIP;
 
 namespace PbxAdmin.LoadTests.AgentEmulation;
@@ -17,6 +18,7 @@ public sealed class AgentPoolService : IAsyncDisposable
     private readonly AgentBehaviorOptions _behaviorOptions;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentPoolService> _logger;
+    private MetricsCollector? _metrics;
 
     private SIPTransport? _transport;
     private List<SipAgent> _agents = [];
@@ -42,6 +44,40 @@ public sealed class AgentPoolService : IAsyncDisposable
     public int InCallAgents => _agents.Count(a => a.State == AgentState.InCall || a.State == AgentState.OnHold);
     public int RingingAgents => _agents.Count(a => a.State == AgentState.Ringing);
     public IReadOnlyList<SipAgent> Agents => _agents.AsReadOnly();
+
+    // -------------------------------------------------------------------------
+    // Metrics binding
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Attaches a MetricsCollector so that agent state transitions automatically
+    /// update peak-in-call, calls-answered, and error counters. Call this once
+    /// before any StartAsync — the binding persists across restarts.
+    /// </summary>
+    public void AttachMetrics(MetricsCollector metrics) => _metrics = metrics;
+
+    private void WireAgentMetrics(SipAgent agent)
+    {
+        if (_metrics is null) return;
+
+        agent.StateChanged += (a, previousState, newState) =>
+        {
+            switch (newState)
+            {
+                case AgentState.InCall:
+                    _metrics.RecordAgentBusy();
+                    _metrics.RecordCallAnswered();
+                    break;
+                case AgentState.Wrapup or AgentState.Idle
+                    when previousState is AgentState.InCall or AgentState.OnHold:
+                    _metrics.RecordAgentFree();
+                    break;
+                case AgentState.Error:
+                    _metrics.RecordAgentError();
+                    break;
+            }
+        };
+    }
 
     // -------------------------------------------------------------------------
     // Lifecycle
@@ -97,6 +133,11 @@ public sealed class AgentPoolService : IAsyncDisposable
             var batch = _agents.Skip(i).Take(batchSize).ToList();
             await Task.WhenAll(batch.Select(a => a.RegisterAsync(ct)));
         }
+
+        // Wire metrics for every agent (survives scenario-driven restarts)
+        _metrics?.SetTotalAgents(agentCount);
+        foreach (var agent in _agents)
+            WireAgentMetrics(agent);
 
         _started = true;
 

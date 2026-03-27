@@ -36,7 +36,7 @@ public sealed class SipAgent : IAsyncDisposable
     public int CallsHandled { get; private set; }
     public DateTime? LastCallTime { get; private set; }
 
-    public event Action<SipAgent, AgentState>? StateChanged;
+    public event Action<SipAgent, AgentState, AgentState>? StateChanged;
 
     public SipAgent(
         string extensionId,
@@ -453,6 +453,6 @@ public sealed class SipAgent : IAsyncDisposable
         _state = newState;
         _logger.LogDebug("Agent {Ext}: {From} → {To}", ExtensionId, previous, newState);
 
-        StateChanged?.Invoke(this, newState);
+        StateChanged?.Invoke(this, previous, newState);
     }
 }
