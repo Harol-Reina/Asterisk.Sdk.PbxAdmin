@@ -307,7 +307,13 @@ static async Task ProvisionAgentsAsync(
         // Use SDK connection if available, otherwise provisioning still works
         // (Asterisk will see the realtime data on next query).
         if (context.SdkRuntime is not null)
+        {
             await provisioning.ReloadAsteriskAsync(context.SdkRuntime.Connection, ct);
+
+            // Asterisk does not emit QueueMemberAdded AMI events for realtime-loaded
+            // members, so re-query live state to discover the newly provisioned agents.
+            await context.SdkRuntime.Server.RequestInitialStateAsync(ct);
+        }
 
         logger.LogInformation("Provisioned {N} agents in PostgreSQL", agents);
     }
