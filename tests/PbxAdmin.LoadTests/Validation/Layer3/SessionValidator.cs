@@ -159,10 +159,14 @@ public static class SessionValidator
                 Message = stateMatch ? null : $"SDK state '{session.FinalState}' is not consistent with CDR disposition '{cdr.Disposition}'"
             });
 
-            // Check 9: Duration within tolerance (2s)
+            // Check 9: Duration within tolerance (2s).
+            // Skip for Failed/TimedOut sessions — SDK Duration measures the full lifecycle
+            // (creation to completion) while CDR billsec measures answer-to-hangup.
+            // These semantics diverge for calls that never connected to an agent.
             bool durationMatch = true;
             string? durationMessage = null;
-            if (session.Duration.HasValue)
+            bool isTerminalFailure = session.FinalState is "Failed" or "TimedOut";
+            if (session.Duration.HasValue && !isTerminalFailure)
             {
                 int sessionDurationSecs = (int)session.Duration.Value.TotalSeconds;
                 int diff = Math.Abs(sessionDurationSecs - cdr.BillSec);
