@@ -51,6 +51,16 @@ public sealed class AgentPoolService : IAsyncDisposable
     public int RingingAgents => _agents.Count(a => a.State == AgentState.Ringing);
     public IReadOnlyList<SipAgent> Agents => _agents.AsReadOnly();
 
+    /// <summary>
+    /// Prevents all agents from accepting new calls. Existing calls continue
+    /// until they complete naturally. Used during test drain phase.
+    /// </summary>
+    public void BeginDrain()
+    {
+        foreach (var agent in _agents)
+            agent.BeginDrain();
+    }
+
     // -------------------------------------------------------------------------
     // Metrics binding
     // -------------------------------------------------------------------------

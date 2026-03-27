@@ -103,7 +103,8 @@ public sealed class SustainedLoadScenario : ITestScenario
 
         await context.Scheduler.StopAsync();
 
-        // Drain: wait for all active calls to finish (agents auto-hangup after TalkTimeSecs + WrapupTimeSecs)
+        // Drain: stop accepting new calls and wait for active ones to finish
+        context.AgentPool.BeginDrain();
         int drainMaxSecs = context.AgentBehavior.TalkTimeSecs + context.AgentBehavior.WrapupTimeSecs + 10;
         logger.LogInformation("[{Scenario}] Draining active calls (max {Secs}s)...", Name, drainMaxSecs);
 

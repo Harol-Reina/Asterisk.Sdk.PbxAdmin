@@ -30,6 +30,7 @@ public sealed class SipAgent : IAsyncDisposable
 
     private CancellationTokenSource? _autoHangupCts;
     private CancellationTokenSource? _wrapupCts;
+    private volatile bool _draining;
     private AgentState _state = AgentState.Offline;
 
     public string ExtensionId { get; }
@@ -253,11 +254,14 @@ public sealed class SipAgent : IAsyncDisposable
     /// The SIPUserAgent.OnIncomingCall event routes here. Also callable directly
     /// from a transport-level dispatcher when sharing transport across agents.
     /// </summary>
+    /// <summary>Prevents the agent from accepting new calls during drain.</summary>
+    internal void BeginDrain() => _draining = true;
+
     internal async Task HandleIncomingInviteAsync(SIPRequest request)
     {
-        if (_state != AgentState.Idle || _userAgent is null)
+        if (_draining || _state != AgentState.Idle || _userAgent is null)
         {
-            _logger.LogDebug("Agent {Ext}: ignoring INVITE in state {State}", ExtensionId, _state);
+            _logger.LogDebug("Agent {Ext}: ignoring INVITE in state {State} (draining={Draining})", ExtensionId, _state, _draining);
             return;
         }
 
