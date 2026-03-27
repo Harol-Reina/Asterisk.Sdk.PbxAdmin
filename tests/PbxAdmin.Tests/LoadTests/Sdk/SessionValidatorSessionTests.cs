@@ -13,13 +13,14 @@ public sealed class SessionValidatorSessionTests
         string sessionId = "session-001",
         string callerNumber = "573101234567",
         string? finalState = "Completed",
+        DateTimeOffset? answerTime = null,
         TimeSpan? duration = null) => new()
     {
         SessionId = sessionId,
         CallerNumber = callerNumber,
         FinalState = finalState,
         StartTime = BaseTime,
-        AnswerTime = BaseTime.AddSeconds(5),
+        AnswerTime = answerTime ?? BaseTime.AddSeconds(5),
         EndTime = BaseTime.AddSeconds(35),
         Duration = duration ?? TimeSpan.FromSeconds(30),
         TalkTime = TimeSpan.FromSeconds(25),
@@ -99,6 +100,33 @@ public sealed class SessionValidatorSessionTests
         result.Passed.Should().BeFalse();
         var check = result.Checks.Single(c => c.CheckName == "StateMatchesDisposition");
         check.Passed.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateSession_ShouldPassState_WhenFailedMatchesAnswered()
+    {
+        // Queue calls: Answer() before Queue() means CDR=ANSWERED even if no agent connects.
+        // SDK correctly marks as Failed because no agent connected.
+        var session = BuildSnapshot(finalState: "Failed", answerTime: null, duration: null);
+        var cdr = BuildCdr(disposition: "ANSWERED");
+
+        var result = SessionValidator.ValidateSession(session, cdr);
+
+        var check = result.Checks.Single(c => c.CheckName == "StateMatchesDisposition");
+        check.Passed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ValidateSession_ShouldPassState_WhenTimedOutMatchesAnswered()
+    {
+        // Same as above but SDK marks as TimedOut (queue ring timeout).
+        var session = BuildSnapshot(finalState: "TimedOut", answerTime: null, duration: null);
+        var cdr = BuildCdr(disposition: "ANSWERED");
+
+        var result = SessionValidator.ValidateSession(session, cdr);
+
+        var check = result.Checks.Single(c => c.CheckName == "StateMatchesDisposition");
+        check.Passed.Should().BeTrue();
     }
 
     [Fact]

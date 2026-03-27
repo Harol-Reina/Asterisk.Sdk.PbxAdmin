@@ -212,9 +212,11 @@ public static class SessionValidator
         if (state is null || string.IsNullOrEmpty(disposition))
             return true;
 
+        // CDR ANSWERED can occur with SDK Failed/TimedOut when Queue Answer()s the
+        // channel before distributing — no agent connects but CDR still shows ANSWERED.
         return disposition.ToUpperInvariant() switch
         {
-            "ANSWERED" => state is "Completed" or "Connected",
+            "ANSWERED" => state is "Completed" or "Connected" or "Failed" or "TimedOut",
             "NO ANSWER" => state is "TimedOut" or "Failed",
             "BUSY" => state is "Failed",
             "FAILED" => state is "Failed",

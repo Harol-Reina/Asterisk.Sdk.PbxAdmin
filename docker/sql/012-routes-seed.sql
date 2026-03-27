@@ -10,7 +10,8 @@ INSERT INTO routes_inbound (server_id, name, did_pattern, destination_type, dest
     ('pbx-realtime', 'Sales Queue Direct', '100', 'queue', 'sales', 25, true, 'Direct route to sales queue from trunk'),
     ('pbx-realtime', 'Load Test Queue', '105', 'queue', 'loadtest', 26, true, 'Load test queue routing from trunk'),
     ('pbx-realtime', 'Sales Queue', '102', 'queue', 'sales', 30, true, 'Route DID 102 to sales queue'),
-    ('pbx-realtime', 'Support Queue', '103', 'queue', 'support', 40, true, 'Route DID 103 to support queue');
+    ('pbx-realtime', 'Support Queue', '103', 'queue', 'support', 40, true, 'Route DID 103 to support queue'),
+    ('pbx-realtime', 'Load Test Failure', '999', 'extension', '999', 50, true, 'Congestion destination for SDK load test validation');
 
 -- =====================================================
 -- pbx-realtime: Outbound routes
