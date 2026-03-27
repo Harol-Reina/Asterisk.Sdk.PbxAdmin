@@ -80,12 +80,14 @@ public sealed class SustainedLoadScenario : ITestScenario
                     }
 
                     logger.LogInformation(
-                        "[{Scenario}] Progress: Active={Active}/{Target}, Idle={Idle}, InCall={InCall}, TotalHandled={Handled}",
+                        "[{Scenario}] Progress: Active={Active}/{Target}, Idle={Idle}, Ringing={Ringing}, InCall={InCall}, Wrapup={Wrapup}, Handled={Handled}",
                         Name,
                         context.Scheduler.ActiveCalls,
                         context.Scheduler.TargetConcurrent,
                         poolStats.Idle,
+                        poolStats.Ringing,
                         poolStats.InCall,
+                        poolStats.Wrapup,
                         poolStats.TotalCallsHandled);
 
                     progressTimer = DateTime.UtcNow;

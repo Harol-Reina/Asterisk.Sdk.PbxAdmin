@@ -60,10 +60,12 @@ public sealed class RampUpScenario : ITestScenario
                 {
                     var poolStats = context.AgentPool.GetStats();
                     logger.LogInformation(
-                        "[{Scenario}] Progress: Idle={Idle}, InCall={InCall}, Calls={Calls}",
+                        "[{Scenario}] Progress: Idle={Idle}, Ringing={Ringing}, InCall={InCall}, Wrapup={Wrapup}, Handled={Handled}",
                         Name,
                         poolStats.Idle,
+                        poolStats.Ringing,
                         poolStats.InCall,
+                        poolStats.Wrapup,
                         poolStats.TotalCallsHandled);
                     progressTimer = DateTime.UtcNow;
                 }
