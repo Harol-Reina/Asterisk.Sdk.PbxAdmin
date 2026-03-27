@@ -303,5 +303,12 @@ public sealed partial class QueueConfigService : IQueueConfigService
         var provider = _providerResolver.GetProvider(serverId);
         if (!await provider.ReloadModuleAsync(serverId, "app_queue.so", ct))
             QueueConfigServiceLog.ReloadFailed(_logger, serverId);
+
+        // Re-query Asterisk for updated queue state so the live SDK layer
+        // reflects members added/removed via realtime DB (Asterisk does not
+        // emit QueueMemberAdded AMI events for realtime-loaded members).
+        var server = _monitor?.GetServer(serverId)?.Server;
+        if (server is not null)
+            await server.RequestInitialStateAsync(ct);
     }
 }
