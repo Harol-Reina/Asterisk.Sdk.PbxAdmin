@@ -283,22 +283,25 @@ else
     private async Task AddMember()
     {
         if (string.IsNullOrWhiteSpace(_addInterface)) return;
-
-        var entry = Monitor.GetServer(ServerId);
-        if (entry is null) return;
+        if (_queueConfig is null)
+        {
+            Toast.Show(L["Toast_Error"], ToastLevel.Error, "Queue must be configured before adding members");
+            return;
+        }
 
         using var _ = ConfigOp.Begin("Adding Member", ServerId, $"{QueueName}/{_addInterface}");
-        var response = await entry.ConfigConnection.SendActionAsync(new QueueAddAction
+        var member = new QueueMemberConfigDto
         {
-            Queue = QueueName,
+            QueueConfigId = _queueConfig.Id,
             Interface = _addInterface,
             MemberName = string.IsNullOrWhiteSpace(_addMemberName) ? null : _addMemberName,
             Penalty = _addPenalty
-        });
-        if (string.Equals(response.Response, "Success", StringComparison.OrdinalIgnoreCase))
+        };
+        var (success, error) = await QueueCfgSvc.AddMemberAsync(ServerId, QueueName, member);
+        if (success)
             Toast.Show(L["Toast_Success"], ToastLevel.Success, $"{_addInterface} added");
         else
-            Toast.Show(L["Toast_Error"], ToastLevel.Error, response.Message);
+            Toast.Show(L["Toast_Error"], ToastLevel.Error, error ?? "Unknown error");
         _addInterface = "";
         _addMemberName = "";
         _addPenalty = 0;
