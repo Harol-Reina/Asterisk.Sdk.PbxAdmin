@@ -238,11 +238,12 @@ run_sdk() {
 
     run_scenario "sdk-session-accuracy" \
         "SDK Session Accuracy" \
-        "Genera 5 llamadas contestadas a la cola loadtest (ext 105) y compara los
-  datos del SDK CallSession contra los registros CDR de la base de datos.
-  Valida que el estado final (Completed) coincida con la disposicion del CDR,
-  que la duracion sea precisa (+/- 2s), y que el caller number coincida.
-  Detecta bugs en la maquina de estados del SDK."
+        "Genera 10 llamadas en 3 fases: 5 contestadas (ext 105), 3 timeout
+  (ext 105 con agentes pausados via AMI QueuePause), 2 fallidas (ext 999
+  → Congestion). Compara CallSession vs CDR para cada disposicion:
+  Completed↔ANSWERED, TimedOut↔NO ANSWER, Failed↔BUSY/FAILED.
+  Valida duracion (+/- 2s) y caller number. Detecta bugs en la maquina
+  de estados del SDK."
 
     run_scenario "sdk-live-drift" \
         "SDK Live State Drift" \
