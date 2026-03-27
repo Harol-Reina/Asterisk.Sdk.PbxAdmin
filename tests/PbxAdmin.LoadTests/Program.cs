@@ -137,17 +137,19 @@ static async Task<int> RunAsync(
     if (talkTime.HasValue)
     {
         agentBehaviorOpts.TalkTimeSecs = talkTime.Value;
-
-        // Sync scheduler slot duration with agent talk time so the scheduler
-        // releases slots when agents actually hang up, not before or after.
-        int totalCycleSecs = talkTime.Value + agentBehaviorOpts.RingDelaySecs + agentBehaviorOpts.WrapupTimeSecs;
-        callPatternOpts.DefaultCallDurationSecs = totalCycleSecs;
-        callPatternOpts.MinCallDurationSecs = totalCycleSecs;
-        callPatternOpts.MaxCallDurationSecs = totalCycleSecs;
-
-        logger.LogInformation("CLI override: TalkTimeSecs={Talk}s, scheduler slot synced to {Cycle}s (talk+ring+wrapup)",
-            talkTime.Value, totalCycleSecs);
+        logger.LogInformation("CLI override: TalkTimeSecs = {Value}s", talkTime.Value);
     }
+
+    // Always sync scheduler slot duration with the effective agent talk time.
+    // Without this, the scheduler holds slots for DefaultCallDurationSecs (180s)
+    // while agents hang up after TalkTimeSecs (30s) — causing a desync where
+    // slots block new calls long after agents are idle.
+    int cycleSecs = agentBehaviorOpts.TalkTimeSecs + agentBehaviorOpts.RingDelaySecs + agentBehaviorOpts.WrapupTimeSecs;
+    callPatternOpts.DefaultCallDurationSecs = cycleSecs;
+    callPatternOpts.MinCallDurationSecs = cycleSecs;
+    callPatternOpts.MaxCallDurationSecs = cycleSecs;
+    logger.LogInformation("Auto-tune: scheduler slot = {Cycle}s (talk={Talk}s + ring={Ring}s + wrapup={Wrap}s)",
+        cycleSecs, agentBehaviorOpts.TalkTimeSecs, agentBehaviorOpts.RingDelaySecs, agentBehaviorOpts.WrapupTimeSecs);
 
     var context = BuildTestContext(host, loggerFactory);
 
