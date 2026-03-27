@@ -124,8 +124,10 @@ public sealed class AgentPoolService : IAsyncDisposable
             _agents.Add(agent);
         }
 
-        // Register in batches of 10 to avoid overwhelming Asterisk
-        const int batchSize = 10;
+        // Register in adaptive batches to balance speed vs Asterisk load
+        int batchSize = CalculateBatchSize(agentCount);
+        _logger.LogInformation("Registering {N} agents in batches of {Batch}", agentCount, batchSize);
+
         for (int i = 0; i < _agents.Count; i += batchSize)
         {
             ct.ThrowIfCancellationRequested();
@@ -219,6 +221,18 @@ public sealed class AgentPoolService : IAsyncDisposable
     /// Realtime: 2100-2399, password loadtest{ext}
     /// File:     4100-4399, password loadtest{ext}
     /// </summary>
+    /// <summary>
+    /// Returns the registration batch size scaled to the total agent count.
+    /// Smaller pools use smaller batches to avoid overwhelming Asterisk;
+    /// larger pools use bigger batches to reduce total registration time.
+    /// </summary>
+    internal static int CalculateBatchSize(int agentCount) => agentCount switch
+    {
+        <= 50 => 10,
+        <= 150 => 20,
+        _ => 30
+    };
+
     internal static (string extensionId, string password) GetAgentCredentials(int index, string targetServer)
     {
         int baseExtension = targetServer.Equals("file", StringComparison.OrdinalIgnoreCase)

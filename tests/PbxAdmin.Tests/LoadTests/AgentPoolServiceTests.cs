@@ -213,6 +213,25 @@ public sealed class AgentPoolServiceTests
     }
 
     // -------------------------------------------------------------------------
+    // Adaptive batch size
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(20, 10)]   // ≤50 agents → batch of 10
+    [InlineData(50, 10)]   // ≤50 agents → batch of 10
+    [InlineData(51, 20)]   // 51-150 agents → batch of 20
+    [InlineData(100, 20)]  // 51-150 agents → batch of 20
+    [InlineData(150, 20)]  // 51-150 agents → batch of 20
+    [InlineData(151, 30)]  // >150 agents → batch of 30
+    [InlineData(300, 30)]  // >150 agents → batch of 30
+    public void CalculateBatchSize_ShouldScaleWithAgentCount(int agentCount, int expectedBatchSize)
+    {
+        int batchSize = AgentPoolService.CalculateBatchSize(agentCount);
+
+        batchSize.Should().Be(expectedBatchSize);
+    }
+
+    // -------------------------------------------------------------------------
     // Initial state of pool (before StartAsync)
     // -------------------------------------------------------------------------
 
