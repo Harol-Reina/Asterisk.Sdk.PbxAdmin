@@ -14,6 +14,10 @@ public sealed class MetricsCollector
     private int _callsFailed;
     private int _currentActiveCalls;
     private int _peakConcurrentCalls;
+    private int _totalAgents;
+    private int _currentAgentsInCall;
+    private int _peakAgentsInCall;
+    private int _agentErrors;
 
     public MetricsCollector(ILogger<MetricsCollector> logger)
     {
@@ -29,6 +33,9 @@ public sealed class MetricsCollector
     public int CallsFailed => Volatile.Read(ref _callsFailed);
     public int CurrentActiveCalls => Volatile.Read(ref _currentActiveCalls);
     public int PeakConcurrentCalls => Volatile.Read(ref _peakConcurrentCalls);
+    public int TotalAgents => Volatile.Read(ref _totalAgents);
+    public int PeakAgentsInCall => Volatile.Read(ref _peakAgentsInCall);
+    public int AgentErrors => Volatile.Read(ref _agentErrors);
 
     // -------------------------------------------------------------------------
     // Recording methods
@@ -68,6 +75,28 @@ public sealed class MetricsCollector
     }
 
     // -------------------------------------------------------------------------
+    // Agent tracking
+    // -------------------------------------------------------------------------
+
+    public void SetTotalAgents(int count) => Volatile.Write(ref _totalAgents, count);
+
+    public void RecordAgentBusy()
+    {
+        int current = Interlocked.Increment(ref _currentAgentsInCall);
+        UpdatePeakAgents(current);
+    }
+
+    public void RecordAgentFree()
+    {
+        Interlocked.Decrement(ref _currentAgentsInCall);
+    }
+
+    public void RecordAgentError()
+    {
+        Interlocked.Increment(ref _agentErrors);
+    }
+
+    // -------------------------------------------------------------------------
     // Summary
     // -------------------------------------------------------------------------
 
@@ -85,7 +114,10 @@ public sealed class MetricsCollector
             CallsFailed = CallsFailed,
             PeakConcurrentCalls = PeakConcurrentCalls,
             CallsPerMinute = Math.Round(cpm, 2),
-            Elapsed = elapsed
+            Elapsed = elapsed,
+            TotalAgents = TotalAgents,
+            PeakAgentsInCall = PeakAgentsInCall,
+            AgentErrors = AgentErrors
         };
     }
 
@@ -99,6 +131,18 @@ public sealed class MetricsCollector
         while (current > observed)
         {
             int previous = Interlocked.CompareExchange(ref _peakConcurrentCalls, current, observed);
+            if (previous == observed)
+                break;
+            observed = previous;
+        }
+    }
+
+    private void UpdatePeakAgents(int current)
+    {
+        int observed = Volatile.Read(ref _peakAgentsInCall);
+        while (current > observed)
+        {
+            int previous = Interlocked.CompareExchange(ref _peakAgentsInCall, current, observed);
             if (previous == observed)
                 break;
             observed = previous;

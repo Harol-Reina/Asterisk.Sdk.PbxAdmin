@@ -31,6 +31,13 @@ public static class ReportGenerator
         Console.WriteLine($"    End             : {report.TestEnd:yyyy-MM-dd HH:mm:ss} UTC");
         Console.WriteLine();
 
+        // Agent metrics
+        Console.WriteLine("  AGENTS");
+        Console.WriteLine($"    Registered      : {metrics.TotalAgents}");
+        Console.WriteLine($"    Peak In-Call     : {metrics.PeakAgentsInCall}");
+        Console.WriteLine($"    Errors          : {metrics.AgentErrors}");
+        Console.WriteLine();
+
         // Call metrics
         Console.WriteLine("  CALL METRICS");
         Console.WriteLine($"    Calls Originated: {metrics.CallsOriginated}");
@@ -100,7 +107,10 @@ public static class ReportGenerator
                 callsFailed = metrics.CallsFailed,
                 answerRate = Math.Round(metrics.AnswerRate, 2),
                 callsPerMinute = metrics.CallsPerMinute,
-                peakConcurrentCalls = metrics.PeakConcurrentCalls
+                peakConcurrentCalls = metrics.PeakConcurrentCalls,
+                totalAgents = metrics.TotalAgents,
+                peakAgentsInCall = metrics.PeakAgentsInCall,
+                agentErrors = metrics.AgentErrors
             },
             validation = new
             {

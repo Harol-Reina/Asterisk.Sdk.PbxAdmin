@@ -225,6 +225,29 @@ static async Task StartAgentsAsync(
     try
     {
         await context.AgentPool.StartAsync(agents, ct);
+
+        // Wire agent state transitions to MetricsCollector for peak tracking
+        context.Metrics.SetTotalAgents(context.AgentPool.TotalAgents);
+        foreach (var agent in context.AgentPool.Agents)
+        {
+            agent.StateChanged += (a, newState) =>
+            {
+                switch (newState)
+                {
+                    case AgentState.InCall:
+                        context.Metrics.RecordAgentBusy();
+                        context.Metrics.RecordCallAnswered();
+                        break;
+                    case AgentState.Wrapup or AgentState.Idle when a.State == AgentState.InCall || a.State == AgentState.OnHold:
+                        context.Metrics.RecordAgentFree();
+                        break;
+                    case AgentState.Error:
+                        context.Metrics.RecordAgentError();
+                        break;
+                }
+            };
+        }
+
         logger.LogInformation("Agent pool ready: {Total} total, {Idle} idle",
             context.AgentPool.TotalAgents, context.AgentPool.IdleAgents);
     }
