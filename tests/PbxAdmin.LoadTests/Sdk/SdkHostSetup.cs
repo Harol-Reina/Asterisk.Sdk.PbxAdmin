@@ -10,8 +10,16 @@ using SdkAmiConnectionOptions = Asterisk.Sdk.Ami.Connection.AmiConnectionOptions
 
 namespace PbxAdmin.LoadTests.Sdk;
 
+/// <summary>
+/// Registers SDK services (Hosting + Sessions) in the DI container and manages
+/// the startup/shutdown lifecycle for the target PBX connection.
+/// </summary>
 internal static class SdkHostSetup
 {
+    /// <summary>
+    /// Registers IAmiConnectionFactory, ICallSessionManager, SessionCaptureService,
+    /// and LiveStateValidator in the service collection.
+    /// </summary>
     public static void ConfigureServices(IServiceCollection services)
     {
         services.AddAsteriskMultiServer();
@@ -25,6 +33,10 @@ internal static class SdkHostSetup
         services.AddSingleton<LiveStateValidator>();
     }
 
+    /// <summary>
+    /// Connects to the target PBX via IAmiConnectionFactory, creates AsteriskServer,
+    /// starts live-state tracking, and attaches the call session manager.
+    /// </summary>
     public static async Task<SdkRuntime> StartAsync(
         IServiceProvider services,
         LoadTestOptions options,
@@ -61,6 +73,7 @@ internal static class SdkHostSetup
         return new SdkRuntime(connection, server, sessionManager);
     }
 
+    /// <summary>Best-effort shutdown of SDK infrastructure.</summary>
     public static async Task StopAsync(SdkRuntime runtime)
     {
         await runtime.DisposeAsync();
