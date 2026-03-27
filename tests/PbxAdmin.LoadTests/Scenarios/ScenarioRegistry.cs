@@ -39,6 +39,7 @@ public static class ScenarioRegistry
             ["rapid-reregister"] = new RapidReregisterScenario(),
             // SDK validation scenarios
             ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
+            ["sdk-live-drift"] = new SdkLiveDriftScenario(),
             // Aliases
             ["smoke"] = new InboundAnswerScenario(),
             ["load"] = new SustainedLoadScenario(),
