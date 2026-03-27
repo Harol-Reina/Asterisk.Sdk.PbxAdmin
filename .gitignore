@@ -14,6 +14,7 @@ publish/
 # Test results
 TestResults/
 test-videos/
+tests/sdk-scenario-results/
 
 # Local documentation (specs, plans, architecture — not committed)
 docs/
