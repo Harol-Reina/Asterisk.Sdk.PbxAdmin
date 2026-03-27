@@ -40,6 +40,7 @@ public static class ScenarioRegistry
             // SDK validation scenarios
             ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
             ["sdk-live-drift"] = new SdkLiveDriftScenario(),
+            ["sdk-reconnect"] = new SdkReconnectScenario(),
             // Aliases
             ["smoke"] = new InboundAnswerScenario(),
             ["load"] = new SustainedLoadScenario(),
