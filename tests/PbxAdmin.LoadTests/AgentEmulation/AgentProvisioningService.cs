@@ -18,8 +18,11 @@ public sealed class AgentProvisioningService : IAsyncDisposable
     private readonly string _connectionString;
     private readonly ILogger<AgentProvisioningService> _logger;
 
+    private const string QueueName = "loadtest";
+
     private int _baseExtension;
     private int _agentCount;
+    private string _serverId = "";
     private bool _provisioned;
 
     public AgentProvisioningService(string connectionString, ILoggerFactory loggerFactory)
@@ -41,7 +44,9 @@ public sealed class AgentProvisioningService : IAsyncDisposable
         if (_provisioned)
             throw new InvalidOperationException("Already provisioned. Call DeprovisionAsync first.");
 
-        _baseExtension = targetServer.Equals("file", StringComparison.OrdinalIgnoreCase) ? 4100 : 2100;
+        bool isFile = targetServer.Equals("file", StringComparison.OrdinalIgnoreCase);
+        _baseExtension = isFile ? 4100 : 2100;
+        _serverId = isFile ? "pbx-file" : "pbx-realtime";
         _agentCount = agentCount;
 
         _logger.LogInformation(
@@ -53,12 +58,15 @@ public sealed class AgentProvisioningService : IAsyncDisposable
             await using var conn = new NpgsqlConnection(_connectionString);
             await conn.OpenAsync(ct);
 
-            // 1. Clean residuals (idempotent)
+            // 1. Clean residuals (idempotent) — both Asterisk and PbxAdmin tables
             await conn.ExecuteAsync(new CommandDefinition(
                 """
-                DELETE FROM queue_members WHERE queue_name = 'loadtest';
+                DELETE FROM queue_members WHERE queue_name = @QueueName;
                 DELETE FROM queue_members WHERE queue_name = 'sales' AND interface LIKE 'PJSIP/21%';
+                DELETE FROM queue_members_config WHERE queue_config_id IN (
+                    SELECT id FROM queues_config WHERE server_id = @ServerId AND name = @QueueName);
                 """,
+                new { ServerId = _serverId, QueueName },
                 cancellationToken: ct));
 
             // Build batch parameters
@@ -114,14 +122,35 @@ public sealed class AgentProvisioningService : IAsyncDisposable
                 """,
                 agents, cancellationToken: ct));
 
-            // 6. Insert queue members (all penalty 0 — no artificial tiers)
+            // 6. Insert queue members into Asterisk realtime table
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 INSERT INTO queue_members (queue_name, interface, membername, penalty)
-                VALUES ('loadtest', @Interface, @MemberName, 0)
+                VALUES (@QueueName, @Interface, @MemberName, 0)
                 ON CONFLICT (queue_name, interface) DO NOTHING
                 """,
-                agents, cancellationToken: ct));
+                agents.Select(a => new { QueueName, a.Interface, a.MemberName }),
+                cancellationToken: ct));
+
+            // 7. Ensure PbxAdmin config queue exists, then insert members
+            int queueConfigId = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                """
+                INSERT INTO queues_config (server_id, name, strategy, timeout, wrapuptime, servicelevel, ringinuse, notes)
+                VALUES (@ServerId, @QueueName, 'leastrecent', 15, 5, 20, 'no', 'Auto-created by load test provisioning')
+                ON CONFLICT (server_id, name) DO UPDATE SET notes = EXCLUDED.notes
+                RETURNING id
+                """,
+                new { ServerId = _serverId, QueueName },
+                cancellationToken: ct));
+
+            await conn.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO queue_members_config (queue_config_id, interface, membername, penalty)
+                VALUES (@QueueConfigId, @Interface, @MemberName, 0)
+                ON CONFLICT (queue_config_id, interface) DO NOTHING
+                """,
+                agents.Select(a => new { QueueConfigId = queueConfigId, a.Interface, a.MemberName }),
+                cancellationToken: ct));
 
             _provisioned = true;
             _logger.LogInformation(
@@ -183,8 +212,10 @@ public sealed class AgentProvisioningService : IAsyncDisposable
                 .Select(i => new { Id = (_baseExtension + i).ToString() })
                 .ToList();
 
+            // Clean Asterisk realtime tables
             await conn.ExecuteAsync(new CommandDefinition(
-                "DELETE FROM queue_members WHERE queue_name = 'loadtest'",
+                "DELETE FROM queue_members WHERE queue_name = @QueueName",
+                new { QueueName },
                 cancellationToken: ct));
             await conn.ExecuteAsync(new CommandDefinition(
                 "DELETE FROM ps_endpoints WHERE id = @Id",
@@ -195,6 +226,12 @@ public sealed class AgentProvisioningService : IAsyncDisposable
             await conn.ExecuteAsync(new CommandDefinition(
                 "DELETE FROM ps_aors WHERE id = @Id",
                 agents, cancellationToken: ct));
+
+            // Clean PbxAdmin config tables (CASCADE deletes queue_members_config)
+            await conn.ExecuteAsync(new CommandDefinition(
+                "DELETE FROM queues_config WHERE server_id = @ServerId AND name = @QueueName",
+                new { ServerId = _serverId, QueueName },
+                cancellationToken: ct));
 
             _provisioned = false;
             _agentCount = 0;
