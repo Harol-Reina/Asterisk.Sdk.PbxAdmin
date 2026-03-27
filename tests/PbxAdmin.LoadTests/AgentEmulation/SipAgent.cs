@@ -28,6 +28,7 @@ public sealed class SipAgent : IAsyncDisposable
     private SIPRequest? _pendingInvite;
     private volatile bool _inviteCancelled;
 
+    private CancellationTokenSource? _autoHangupCts;
     private CancellationTokenSource? _wrapupCts;
     private AgentState _state = AgentState.Offline;
 
@@ -239,6 +240,7 @@ public sealed class SipAgent : IAsyncDisposable
             return;
         }
 
+        CancelAutoHangupTimer();
         _userAgent?.Hangup();
         _pendingInvite = null;
         await CleanupCallAsync();
@@ -291,6 +293,8 @@ public sealed class SipAgent : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        CancelAutoHangupTimer();
+
         if (_wrapupCts is not null)
         {
             await _wrapupCts.CancelAsync();
@@ -361,6 +365,7 @@ public sealed class SipAgent : IAsyncDisposable
     private void OnCallHungup(SIPDialogue dialogue)
     {
         _logger.LogInformation("Agent {Ext}: remote hangup", ExtensionId);
+        CancelAutoHangupTimer();
         _ = CleanupCallAndWrapupAsync();
     }
 
@@ -388,8 +393,10 @@ public sealed class SipAgent : IAsyncDisposable
 
                 _logger.LogInformation("Agent {Ext}: call answered (total: {Count})", ExtensionId, CallsHandled);
 
-                // Schedule auto-hangup after configured talk time
-                _ = AutoHangupAfterTalkTimeAsync();
+                // Schedule auto-hangup after configured talk time (cancellable by remote hangup)
+                CancelAutoHangupTimer();
+                _autoHangupCts = new CancellationTokenSource();
+                _ = AutoHangupAfterTalkTimeAsync(_autoHangupCts.Token);
             }
             else
             {
@@ -408,15 +415,30 @@ public sealed class SipAgent : IAsyncDisposable
         }
     }
 
-    private async Task AutoHangupAfterTalkTimeAsync()
+    private async Task AutoHangupAfterTalkTimeAsync(CancellationToken ct)
     {
-        await Task.Delay(TimeSpan.FromSeconds(_behavior.TalkTimeSecs));
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(_behavior.TalkTimeSecs), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // Remote hangup already handled cleanup
+        }
 
         if (_state == AgentState.InCall || _state == AgentState.OnHold)
         {
             _logger.LogInformation("Agent {Ext}: talk time elapsed, hanging up", ExtensionId);
             await HangupAsync();
         }
+    }
+
+    private void CancelAutoHangupTimer()
+    {
+        if (_autoHangupCts is null) return;
+        _autoHangupCts.Cancel();
+        _autoHangupCts.Dispose();
+        _autoHangupCts = null;
     }
 
     private async Task BeginWrapupAsync()
