@@ -190,7 +190,7 @@ public sealed class CallGeneratorService : IAsyncDisposable
             Username = _options.PstnEmulatorAmi.Username,
             Password = _options.PstnEmulatorAmi.Password,
             DefaultResponseTimeout = TimeSpan.FromSeconds(15),
-            AutoReconnect = false
+            AutoReconnect = true
         });
 
         return new SdkAmiConnection(

@@ -120,6 +120,16 @@ public sealed class CallGeneratorServiceTests
         action.Channel.Should().StartWith("Local/2001@");
     }
 
+    // --- CreateDefaultConnection: structure ---
+
+    [Fact]
+    public void CreateDefaultConnection_ShouldExist_AsPrivateMethod()
+    {
+        var method = typeof(CallGeneratorService).GetMethod("CreateDefaultConnection",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        method.Should().NotBeNull("CreateDefaultConnection must exist on CallGeneratorService");
+    }
+
     // --- Helper ---
 
     /// <summary>
