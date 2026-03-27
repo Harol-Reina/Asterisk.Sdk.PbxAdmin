@@ -21,15 +21,10 @@ public sealed class SdkSessionAccuracyScenario : ITestScenario
         var logger = context.LoggerFactory.CreateLogger<SdkSessionAccuracyScenario>();
         context.TestStartTime = DateTime.UtcNow;
 
-        // Start session capture if SDK runtime is available
-        if (context.SdkRuntime is not null && context.SessionCapture is not null)
+        if (context.SdkRuntime is null || context.SessionCapture is null)
         {
-            context.SessionCapture.Attach(context.SdkRuntime.SessionManager);
-            logger.LogInformation("[{Scenario}] SessionCapture attached to SDK SessionManager", Name);
-        }
-        else
-        {
-            logger.LogWarning("[{Scenario}] SDK runtime not available — session capture disabled", Name);
+            logger.LogError("[{Scenario}] SDK infrastructure not available — cannot run", Name);
+            throw new InvalidOperationException("SdkRuntime and SessionCapture are required for this scenario");
         }
 
         // Phase 1: 5 answered calls to ext 105 (loadtest queue)
