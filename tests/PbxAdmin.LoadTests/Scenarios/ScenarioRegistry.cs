@@ -37,6 +37,8 @@ public static class ScenarioRegistry
             ["agent-crash"] = new AgentCrashScenario(),
             ["trunk-failure"] = new TrunkFailureScenario(),
             ["rapid-reregister"] = new RapidReregisterScenario(),
+            // SDK validation scenarios
+            ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
             // Aliases
             ["smoke"] = new InboundAnswerScenario(),
             ["load"] = new SustainedLoadScenario(),

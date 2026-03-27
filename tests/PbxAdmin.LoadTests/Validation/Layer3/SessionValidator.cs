@@ -1,3 +1,4 @@
+using PbxAdmin.LoadTests.Sdk;
 using PbxAdmin.LoadTests.Validation.Layer1;
 using PbxAdmin.LoadTests.Validation.Layer2;
 
@@ -123,6 +124,101 @@ public static class SessionValidator
             ValidatorName = nameof(SessionValidator),
             Passed = allPassed,
             Checks = checks
+        };
+    }
+
+    /// <summary>
+    /// Compares a CallSessionSnapshot (SDK-processed session) against a CDR record
+    /// to detect discrepancies between the SDK session tracker and the database.
+    /// </summary>
+    public static ValidationResult ValidateSession(CallSessionSnapshot session, CdrRecord? cdr)
+    {
+        var checks = new List<ValidationCheck>();
+
+        // Check 1: CDR must exist
+        bool cdrExists = cdr is not null;
+        checks.Add(new ValidationCheck
+        {
+            CheckName = "CdrExists",
+            Passed = cdrExists,
+            Expected = "CDR record present",
+            Actual = cdrExists ? "CDR record present" : "CDR record missing",
+            Message = cdrExists ? null : $"SDK session {session.SessionId} completed but no CDR was written to the database"
+        });
+
+        if (cdr is not null)
+        {
+            // Check 8: State must be consistent with CDR disposition
+            bool stateMatch = IsStateDispositionConsistent(session.FinalState, cdr.Disposition);
+            checks.Add(new ValidationCheck
+            {
+                CheckName = "StateMatchesDisposition",
+                Passed = stateMatch,
+                Expected = session.FinalState,
+                Actual = cdr.Disposition,
+                Message = stateMatch ? null : $"SDK state '{session.FinalState}' is not consistent with CDR disposition '{cdr.Disposition}'"
+            });
+
+            // Check 9: Duration within tolerance (2s)
+            bool durationMatch = true;
+            string? durationMessage = null;
+            if (session.Duration.HasValue)
+            {
+                int sessionDurationSecs = (int)session.Duration.Value.TotalSeconds;
+                int diff = Math.Abs(sessionDurationSecs - cdr.BillSec);
+                durationMatch = diff <= DurationToleranceSecs;
+                if (!durationMatch)
+                    durationMessage = $"SDK duration {sessionDurationSecs}s differs from CDR billsec {cdr.BillSec}s by {diff}s (tolerance {DurationToleranceSecs}s)";
+            }
+
+            checks.Add(new ValidationCheck
+            {
+                CheckName = "DurationMatch",
+                Passed = durationMatch,
+                Expected = session.Duration.HasValue ? ((int)session.Duration.Value.TotalSeconds).ToString() : "(not set)",
+                Actual = cdr.BillSec.ToString(),
+                Message = durationMessage
+            });
+
+            // Check 10: Caller number must match CDR source
+            bool callerMatch = string.Equals(session.CallerNumber, cdr.Src, StringComparison.Ordinal);
+            checks.Add(new ValidationCheck
+            {
+                CheckName = "CallerMatch",
+                Passed = callerMatch,
+                Expected = session.CallerNumber,
+                Actual = cdr.Src,
+                Message = callerMatch ? null : $"SDK caller '{session.CallerNumber}' does not match CDR src '{cdr.Src}'"
+            });
+        }
+
+        bool allPassed = checks.All(c => c.Passed);
+
+        return new ValidationResult
+        {
+            CallId = session.SessionId,
+            ValidatorName = nameof(SessionValidator),
+            Passed = allPassed,
+            Checks = checks
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private static bool IsStateDispositionConsistent(string? state, string? disposition)
+    {
+        if (state is null || string.IsNullOrEmpty(disposition))
+            return true;
+
+        return disposition.ToUpperInvariant() switch
+        {
+            "ANSWERED" => state is "Completed" or "Connected",
+            "NO ANSWER" => state is "TimedOut" or "Failed",
+            "BUSY" => state is "Failed",
+            "FAILED" => state is "Failed",
+            _ => true
         };
     }
 }
