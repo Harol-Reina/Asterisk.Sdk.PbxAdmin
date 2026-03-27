@@ -131,11 +131,12 @@ static async Task<int> RunAsync(
 
         var elapsed = context.TestEndTime - context.TestStartTime;
         var metrics = context.Metrics.GetSummary(elapsed);
-        ReportGenerator.WriteConsoleReport(report, metrics);
+        var dockerStats = context.DockerStats?.GetSummary();
+        ReportGenerator.WriteConsoleReport(report, metrics, dockerStats);
 
         if (!string.IsNullOrWhiteSpace(outputPath))
         {
-            ReportGenerator.WriteJsonReport(report, metrics, outputPath);
+            ReportGenerator.WriteJsonReport(report, metrics, dockerStats, outputPath);
             logger.LogInformation("JSON report written to {Path}", outputPath);
         }
 
