@@ -45,8 +45,8 @@ public sealed class SustainedLoadScenario : ITestScenario
                 stats.Elapsed,
                 stats.Remaining);
 
-        // Force immediate full load by setting RampUpMinutes to 0 at the scheduler level.
-        // The scheduler's CalculateRampTarget returns targetConcurrent immediately when rampUpMinutes <= 0.
+        // Force immediate full load — no ramp-up
+        context.CallPattern.RampUpMinutes = 0;
         await context.Scheduler.StartAsync(context.CallPattern.MaxConcurrentCalls, ct);
 
         var progressTimer = DateTime.UtcNow;

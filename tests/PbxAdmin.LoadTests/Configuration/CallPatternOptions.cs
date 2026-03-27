@@ -10,7 +10,7 @@ public sealed class CallPatternOptions
     public int MinCallDurationSecs { get; set; } = 30;
     public int MaxCallDurationSecs { get; set; } = 900;
     public bool BurstMode { get; init; }
-    public int RampUpMinutes { get; init; } = 5;
+    public int RampUpMinutes { get; set; } = 5;
     public int TestDurationMinutes { get; set; } = 60;
     public Dictionary<string, int> ScenarioMix { get; init; } = new()
     {
