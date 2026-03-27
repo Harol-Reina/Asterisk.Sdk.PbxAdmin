@@ -280,6 +280,30 @@ public sealed class SipAgentTests
     }
 
     // -------------------------------------------------------------------------
+    // CalculateStaggeredExpiry — thundering-herd prevention
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void RegistrationExpiry_ShouldBeStaggered_AcrossMultipleAgents()
+    {
+        // When creating many agents, their registration expiry should vary
+        // to avoid thundering-herd re-registration storms.
+        var expiries = new HashSet<int>();
+
+        for (int i = 0; i < 50; i++)
+        {
+            int expiry = SipAgent.CalculateStaggeredExpiry(i);
+            expiry.Should().BeInRange(90, 150,
+                "expiry should be staggered between 90-150 seconds");
+            expiries.Add(expiry);
+        }
+
+        // With 50 agents spread over a 60-second range, we should see at least 5 distinct values
+        expiries.Count.Should().BeGreaterOrEqualTo(5,
+            "expiry values should be distributed, not all the same");
+    }
+
+    // -------------------------------------------------------------------------
     // DisposeAsync — does not throw
     // -------------------------------------------------------------------------
 

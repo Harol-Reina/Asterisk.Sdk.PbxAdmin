@@ -74,6 +74,8 @@ public sealed class SipAgent : IAsyncDisposable
         var aor = SIPURI.ParseSIPURI($"sip:{ExtensionId}@{_serverHost}:{_serverPort}");
         var contactUri = SIPURI.ParseSIPURI($"sip:{ExtensionId}@0.0.0.0");
 
+        int expiry = CalculateStaggeredExpiry(int.Parse(ExtensionId) % 300);
+
         _regAgent = new SIPRegistrationUserAgent(
             _transport,
             outboundProxy: null,
@@ -83,11 +85,11 @@ public sealed class SipAgent : IAsyncDisposable
             realm: null,
             registrarHost: $"{_serverHost}:{_serverPort}",
             contactURI: contactUri,
-            expiry: 120,
+            expiry: expiry,
             customHeaders: null,
-            maxRegistrationAttemptTimeout: 5000,
-            registerFailureRetryInterval: 5,
-            maxRegisterAttempts: 3,
+            maxRegistrationAttemptTimeout: 10000,
+            registerFailureRetryInterval: 10,
+            maxRegisterAttempts: 10,
             exitOnUnequivocalFailure: false);
 
         _regAgent.RegistrationSuccessful += OnRegistrationSuccessful;
@@ -454,5 +456,16 @@ public sealed class SipAgent : IAsyncDisposable
         _logger.LogDebug("Agent {Ext}: {From} → {To}", ExtensionId, previous, newState);
 
         StateChanged?.Invoke(this, previous, newState);
+    }
+
+    /// <summary>
+    /// Returns a registration expiry value between 90 and 150 seconds,
+    /// deterministically staggered by agent index to avoid thundering-herd
+    /// re-registration when running hundreds of agents.
+    /// </summary>
+    internal static int CalculateStaggeredExpiry(int agentIndex)
+    {
+        // Spread across 90-150s range using modulo for deterministic distribution
+        return 90 + (agentIndex * 7 % 61);
     }
 }
