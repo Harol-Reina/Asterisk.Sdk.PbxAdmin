@@ -23,6 +23,10 @@ services:
       dockerfile: Dockerfile.asterisk-realtime
     container_name: demo-pbx-realtime
     entrypoint: ["/entrypoint-asterisk.sh"]
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     environment:
       - EXTERNAL_IP=${EXTERNAL_IP:-}
     ports:
@@ -81,6 +85,10 @@ services:
       dockerfile: Dockerfile.asterisk-file
     container_name: demo-pbx-file
     entrypoint: ["/entrypoint-asterisk.sh"]
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     environment:
       - EXTERNAL_IP=${EXTERNAL_IP:-}
     ports:
@@ -121,6 +129,10 @@ services:
   pstn-emulator:
     image: docker-asterisk-file:latest
     container_name: demo-pstn
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     ports:
       - "5040:5038"
     depends_on:
