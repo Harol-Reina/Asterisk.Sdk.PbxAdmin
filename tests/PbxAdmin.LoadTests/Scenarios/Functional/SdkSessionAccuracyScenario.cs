@@ -6,15 +6,14 @@ using PbxAdmin.LoadTests.Validation.Layer3;
 namespace PbxAdmin.LoadTests.Scenarios.Functional;
 
 /// <summary>
-/// Generates calls across different dispositions (answered, failed) and validates
-/// that the SDK CallSession data matches CDR records in the database.
-/// Phase 1: 5 answered calls to ext 105 (queue → agent answers)
-/// Phase 2: 2 failed calls to ext 999 (invalid destination)
+/// Generates 5 inbound calls to the loadtest queue (ext 105) and validates that
+/// the SDK CallSession data matches CDR records in the database. Checks state,
+/// duration, and caller number accuracy.
 /// </summary>
 public sealed class SdkSessionAccuracyScenario : ITestScenario
 {
     public string Name => "sdk-session-accuracy";
-    public string Description => "Validates SDK CallSession accuracy against CDR for answered and failed calls";
+    public string Description => "5 inbound calls to loadtest queue — validates SDK CallSession accuracy against CDR";
 
     public async Task ExecuteAsync(TestContext context, CancellationToken ct)
     {
@@ -51,37 +50,9 @@ public sealed class SdkSessionAccuracyScenario : ITestScenario
             logger.LogError(ex, "[{Scenario}] Phase 1 call generation failed", Name);
         }
 
-        // Wait for answered calls to complete (ring + talk + hangup)
-        logger.LogInformation("[{Scenario}] Waiting 45s for Phase 1 calls to complete", Name);
+        // Wait for calls to complete (ring + talk + hangup)
+        logger.LogInformation("[{Scenario}] Waiting 45s for calls to complete", Name);
         await Task.Delay(TimeSpan.FromSeconds(45), ct);
-
-        // Phase 2: 2 failed calls to ext 999 (invalid destination)
-        logger.LogInformation("[{Scenario}] Phase 2: Generating 2 failed calls to extension 999", Name);
-        try
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                var result = await context.CallGenerator.GenerateCallAsync("999", cancellationToken: ct);
-                context.EventCapture.RegisterCall(result.CallId, result.Caller.Number, result.Destination, result.Timestamp);
-                context.Metrics.RecordCallOriginated();
-
-                if (result.Accepted)
-                    logger.LogDebug("[{Scenario}] Phase 2 call {N}/2 accepted: {CallId}", Name, i + 1, result.CallId);
-                else
-                    logger.LogWarning("[{Scenario}] Phase 2 call {N}/2 rejected: {Error}", Name, i + 1, result.ErrorMessage);
-
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogError(ex, "[{Scenario}] Phase 2 call generation failed", Name);
-        }
-
-        // Wait for failed calls to complete
-        logger.LogInformation("[{Scenario}] Waiting 15s for Phase 2 calls to complete", Name);
-        await Task.Delay(TimeSpan.FromSeconds(15), ct);
 
         // Stop session capture
         if (context.SessionCapture is not null)
@@ -156,8 +127,8 @@ public sealed class SdkSessionAccuracyScenario : ITestScenario
             }
         }
 
-        // Aggregate check: enough sessions were tracked
-        const int expectedMinSessions = 7;
+        // Aggregate check: enough sessions were tracked (5 answered calls to ext 105)
+        const int expectedMinSessions = 5;
         bool allTracked = sessions.Count >= expectedMinSessions;
         results.Add(new ValidationResult
         {

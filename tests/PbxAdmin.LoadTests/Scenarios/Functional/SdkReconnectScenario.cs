@@ -36,6 +36,10 @@ public sealed class SdkReconnectScenario : ITestScenario
             throw new InvalidOperationException("SdkRuntime and SessionCapture are required for this scenario");
         }
 
+        // Phase 0: Wait for any lingering channels from previous runs to drain
+        logger.LogInformation("[{Scenario}] Phase 0: Waiting for Asterisk channels to drain before starting", Name);
+        await WaitForChannelsDrainedAsync(context.SdkRuntime.Connection, logger, ct);
+
         // Phase 1: Pre-disconnect calls to verify connection works
         logger.LogInformation(
             "[{Scenario}] Phase 1: Generating {Count} pre-disconnect calls to extension 105",
@@ -259,6 +263,59 @@ public sealed class SdkReconnectScenario : ITestScenario
         });
 
         return BuildReport(context, results);
+    }
+
+    /// <summary>
+    /// Polls AMI "core show channels count" until active channels reach 0, or times out after 60s.
+    /// Prevents interference from channels left by previous scenario runs.
+    /// </summary>
+    private static async Task WaitForChannelsDrainedAsync(
+        IAmiConnection connection, ILogger logger, CancellationToken ct)
+    {
+        const int timeoutMs = 60_000;
+        const int pollMs = 3_000;
+        int elapsed = 0;
+
+        while (elapsed < timeoutMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var response = await connection.SendActionAsync<CommandResponse>(
+                    new CommandAction { Command = "core show channels count" }, ct);
+                int channels = ParseFirstInteger(response.Output ?? "");
+
+                if (channels == 0)
+                {
+                    logger.LogDebug("Channels drained after {Elapsed}ms", elapsed);
+                    return;
+                }
+
+                logger.LogDebug("Waiting for {Channels} active channels to drain...", channels);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Channel drain query failed, retrying...");
+            }
+
+            await Task.Delay(pollMs, ct);
+            elapsed += pollMs;
+        }
+
+        logger.LogWarning("Channel drain timed out after {Timeout}ms — proceeding anyway", timeoutMs);
+    }
+
+    private static int ParseFirstInteger(string text)
+    {
+        int start = -1;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (char.IsDigit(text[i])) { start = i; break; }
+        }
+        if (start < 0) return 0;
+        int end = start;
+        while (end < text.Length && char.IsDigit(text[end])) end++;
+        return int.TryParse(text[start..end], out int value) ? value : 0;
     }
 
     private static ValidationReport BuildReport(TestContext context, List<ValidationResult> results) => new()

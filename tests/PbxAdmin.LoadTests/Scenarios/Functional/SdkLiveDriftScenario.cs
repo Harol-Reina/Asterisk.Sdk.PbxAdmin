@@ -16,7 +16,7 @@ public sealed class SdkLiveDriftScenario : ITestScenario
     private const int BurstSize = 5;
     private const int BurstIntervalSeconds = 10;
     private const int ActiveMinutes = 2;
-    private const int DrainSeconds = 30;
+    private const int DrainSeconds = 90;
     private const int SamplingIntervalSeconds = 3;
 
     public async Task ExecuteAsync(TestContext context, CancellationToken ct)
