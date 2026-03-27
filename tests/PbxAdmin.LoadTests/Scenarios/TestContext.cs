@@ -3,6 +3,7 @@ using PbxAdmin.LoadTests.AgentEmulation;
 using PbxAdmin.LoadTests.CallGeneration;
 using PbxAdmin.LoadTests.Configuration;
 using PbxAdmin.LoadTests.Metrics;
+using PbxAdmin.LoadTests.Sdk;
 using PbxAdmin.LoadTests.Validation.Layer1;
 using PbxAdmin.LoadTests.Validation.Layer2;
 
@@ -29,4 +30,9 @@ public sealed class TestContext
 
     public DateTime TestStartTime { get; set; }
     public DateTime TestEndTime { get; set; }
+
+    // SDK infrastructure (null when running without SDK validation)
+    public SdkRuntime? SdkRuntime { get; set; }
+    public SessionCaptureService? SessionCapture { get; set; }
+    public LiveStateValidator? LiveStateValidator { get; set; }
 }

@@ -8,6 +8,7 @@ using PbxAdmin.LoadTests.CallGeneration;
 using PbxAdmin.LoadTests.Configuration;
 using PbxAdmin.LoadTests.Metrics;
 using PbxAdmin.LoadTests.Scenarios;
+using PbxAdmin.LoadTests.Sdk;
 using PbxAdmin.LoadTests.Validation;
 using PbxAdmin.LoadTests.Validation.Layer1;
 using PbxAdmin.LoadTests.Validation.Layer2;
@@ -114,6 +115,9 @@ static async Task<int> RunAsync(
         await StartAgentsAsync(context, agents, logger, cts.Token);
         await ConnectPstnEmulatorAsync(context, logger, cts.Token);
 
+        // Start SDK infrastructure (connect to target PBX, start session tracking)
+        await StartSdkAsync(context, host.Services, logger, cts.Token);
+
         // Execute scenario
         logger.LogInformation("Executing scenario: {Name} — {Description}", testScenario.Name, testScenario.Description);
         await testScenario.ExecuteAsync(context, cts.Token);
@@ -148,6 +152,8 @@ static async Task<int> RunAsync(
     }
     finally
     {
+        if (context.SdkRuntime is not null)
+            try { await SdkHostSetup.StopAsync(context.SdkRuntime); } catch { /* best-effort */ }
         try { await context.AgentPool.DisposeAsync(); } catch { /* best-effort */ }
         try { await context.CallGenerator.DisposeAsync(); } catch { /* best-effort */ }
         await Log.CloseAndFlushAsync();
@@ -179,6 +185,9 @@ static IHost BuildHost()
     builder.Services.AddSingleton<AgentPoolService>();
     builder.Services.AddSingleton<SdkEventCapture>();
     builder.Services.AddSingleton<MetricsCollector>();
+
+    // SDK infrastructure (Hosting + Sessions + Live)
+    SdkHostSetup.ConfigureServices(builder.Services);
 
     builder.Services.AddSingleton<ICdrReadRepository>(sp =>
         new DbCdrReadRepository(
@@ -238,6 +247,32 @@ static async Task StartAgentsAsync(
     catch (Exception ex)
     {
         logger.LogWarning(ex, "Agent registration failed (Docker stack may not be running) — continuing");
+    }
+}
+
+static async Task StartSdkAsync(
+    TestContext context,
+    IServiceProvider services,
+    MsLogger logger,
+    CancellationToken ct)
+{
+    logger.LogInformation("Starting SDK infrastructure (Hosting + Sessions + Live)...");
+    try
+    {
+        var sdkRuntime = await SdkHostSetup.StartAsync(services, context.Options, ct);
+        context.SdkRuntime = sdkRuntime;
+
+        var sessionCapture = services.GetRequiredService<SessionCaptureService>();
+        sessionCapture.Attach(sdkRuntime.SessionManager);
+        context.SessionCapture = sessionCapture;
+
+        context.LiveStateValidator = services.GetRequiredService<LiveStateValidator>();
+
+        logger.LogInformation("SDK infrastructure ready");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "SDK infrastructure startup failed — SDK scenarios will not work");
     }
 }
 
