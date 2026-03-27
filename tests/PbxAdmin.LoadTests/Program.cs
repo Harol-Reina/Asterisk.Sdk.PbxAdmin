@@ -111,12 +111,13 @@ static async Task<int> RunAsync(
         // Attach metrics to services that generate calls/manage agents
         context.Scheduler.AttachMetrics(context.Metrics);
 
-        // Start agents + PSTN emulator connection
+        // SDK first (provides AMI connection to target PBX for provisioning reload)
+        await StartSdkAsync(context, host.Services, logger, cts.Token);
+
+        // Provision PJSIP endpoints + queue members, reload Asterisk, then register SIP agents
+        await ProvisionAgentsAsync(context, agents, target, logger, cts.Token);
         await StartAgentsAsync(context, agents, logger, cts.Token);
         await ConnectPstnEmulatorAsync(context, logger, cts.Token);
-
-        // Start SDK infrastructure (connect to target PBX, start session tracking)
-        await StartSdkAsync(context, host.Services, logger, cts.Token);
 
         // Start Docker stats collection
         StartDockerStats(context, loggerFactory);
@@ -161,6 +162,8 @@ static async Task<int> RunAsync(
         if (context.SdkRuntime is not null)
             try { await SdkHostSetup.StopAsync(context.SdkRuntime); } catch { /* best-effort */ }
         try { await context.AgentPool.DisposeAsync(); } catch { /* best-effort */ }
+        if (context.AgentProvisioning is not null)
+            try { await context.AgentProvisioning.DisposeAsync(); } catch { /* best-effort */ }
         try { await context.CallGenerator.DisposeAsync(); } catch { /* best-effort */ }
         await Log.CloseAndFlushAsync();
     }
@@ -232,6 +235,37 @@ static TestContext BuildTestContext(IHost host, ILoggerFactory loggerFactory) =>
     };
 
 // ─── Helper methods ──────────────────────────────────────────────────────────
+
+static async Task ProvisionAgentsAsync(
+    TestContext context,
+    int agents,
+    string targetServer,
+    MsLogger logger,
+    CancellationToken ct)
+{
+    logger.LogInformation("Provisioning {N} PJSIP endpoints + queue members...", agents);
+    try
+    {
+        var provisioning = new AgentProvisioningService(
+            context.Options.PostgresConnectionString,
+            context.LoggerFactory);
+        context.AgentProvisioning = provisioning;
+
+        await provisioning.ProvisionAsync(agents, targetServer, ct);
+
+        // Reload Asterisk modules so it picks up the new endpoints/members.
+        // Use SDK connection if available, otherwise provisioning still works
+        // (Asterisk will see the realtime data on next query).
+        if (context.SdkRuntime is not null)
+            await provisioning.ReloadAsteriskAsync(context.SdkRuntime.Connection, ct);
+
+        logger.LogInformation("Provisioned {N} agents in PostgreSQL", agents);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Agent provisioning failed — SIP registration may fail if endpoints don't exist");
+    }
+}
 
 static async Task StartAgentsAsync(
     TestContext context,

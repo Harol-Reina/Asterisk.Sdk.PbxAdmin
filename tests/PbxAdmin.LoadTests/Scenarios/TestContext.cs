@@ -36,4 +36,5 @@ public sealed class TestContext
     public SessionCaptureService? SessionCapture { get; set; }
     public LiveStateValidator? LiveStateValidator { get; set; }
     public DockerStatsCollector? DockerStats { get; set; }
+    public AgentProvisioningService? AgentProvisioning { get; set; }
 }
