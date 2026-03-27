@@ -29,7 +29,9 @@ public sealed class TrunkFailureScenario : ITestScenario
             "[{Scenario}] Starting: {PreSecs}s normal → trunk failure → {Drain}s drain → restart → {PostSecs}s normal",
             Name, PreFailureSecs, DrainSecs, PostRestartSecs);
 
-        await context.AgentPool.StartAsync(context.AgentBehavior.AgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
         await context.Scheduler.StartAsync(context.CallPattern.MaxConcurrentCalls, ct);
 
         // Phase 1: normal operation

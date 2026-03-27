@@ -38,7 +38,9 @@ public sealed class PeakHourScenario : ITestScenario
             Name,
             string.Join(", ", context.CallPattern.ScenarioMix.Select(kv => $"{kv.Key}={kv.Value}%")));
 
-        await context.AgentPool.StartAsync(context.AgentBehavior.AgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
 
         context.Scheduler.StatsUpdated += stats =>
         {

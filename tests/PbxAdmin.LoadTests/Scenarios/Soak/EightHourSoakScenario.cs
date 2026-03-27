@@ -41,7 +41,9 @@ public sealed class EightHourSoakScenario : ITestScenario
             "[{Scenario}] Starting: target={Target} (50% of {Max}), duration={Duration}m",
             Name, targetConcurrent, context.CallPattern.MaxConcurrentCalls, durationMinutes);
 
-        await context.AgentPool.StartAsync(context.AgentBehavior.AgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
 
         context.Scheduler.StatsUpdated += stats =>
             logger.LogInformation(

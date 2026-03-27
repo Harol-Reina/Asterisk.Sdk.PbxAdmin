@@ -31,7 +31,9 @@ public sealed class SustainedLoadScenario : ITestScenario
             context.CallPattern.MaxConcurrentCalls,
             context.CallPattern.TestDurationMinutes);
 
-        await context.AgentPool.StartAsync(context.AgentBehavior.AgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
 
         context.Scheduler.StatsUpdated += stats =>
             logger.LogInformation(

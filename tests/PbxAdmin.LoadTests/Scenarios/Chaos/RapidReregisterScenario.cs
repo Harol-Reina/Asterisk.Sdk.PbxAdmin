@@ -39,7 +39,9 @@ public sealed class RapidReregisterScenario : ITestScenario
             "[{Scenario}] Starting: agents={Agents}, churnEvery={Interval}s, duration={Duration}s, target={Target}",
             Name, effectiveAgentCount, ChurnIntervalSecs, TestDurationSecs, targetConcurrent);
 
-        await context.AgentPool.StartAsync(effectiveAgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
         await context.Scheduler.StartAsync(targetConcurrent, ct);
 
         var churnTimer = DateTime.UtcNow;

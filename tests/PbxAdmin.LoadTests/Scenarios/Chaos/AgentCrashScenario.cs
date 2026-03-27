@@ -34,7 +34,9 @@ public sealed class AgentCrashScenario : ITestScenario
             "[{Scenario}] Starting: target={Target}, warmUp={WarmUp}s, crashInterval={Interval}s",
             Name, targetConcurrent, WarmUpSecs, CrashIntervalSecs);
 
-        await context.AgentPool.StartAsync(context.AgentBehavior.AgentCount, ct);
+        logger.LogInformation(
+            "[{Scenario}] Using pre-registered agent pool: {Idle} idle, {Total} total",
+            Name, context.AgentPool.IdleAgents, context.AgentPool.TotalAgents);
         await context.Scheduler.StartAsync(targetConcurrent, ct);
 
         // Phase 1: run normally during warm-up period
