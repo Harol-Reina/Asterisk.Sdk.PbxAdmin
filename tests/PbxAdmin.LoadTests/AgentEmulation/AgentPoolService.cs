@@ -24,6 +24,11 @@ public sealed class AgentPoolService : IAsyncDisposable
     private List<SipAgent> _agents = [];
     private bool _started;
 
+    // Readiness gate configuration
+    internal const int MinReadyPercent = 80;
+    internal const int MaxRetryWaves = 2;
+    internal const int ReadinessSettleDelaySecs = 10;
+
     public AgentPoolService(
         IOptions<LoadTestOptions> loadOptions,
         IOptions<AgentBehaviorOptions> behaviorOptions,
@@ -136,6 +141,9 @@ public sealed class AgentPoolService : IAsyncDisposable
             await Task.WhenAll(batch.Select(a => a.RegisterAsync(ct)));
         }
 
+        // Wait for agents to register and retry failures
+        await WaitForReadyAsync(ct);
+
         // Wire metrics for every agent (survives scenario-driven restarts)
         _metrics?.SetTotalAgents(agentCount);
         foreach (var agent in _agents)
@@ -168,6 +176,77 @@ public sealed class AgentPoolService : IAsyncDisposable
         _agents.Clear();
         _started = false;
         _logger.LogInformation("AgentPoolService stopped: all agents unregistered and disposed");
+    }
+
+    /// <summary>
+    /// Waits for agents to finish registering, retries agents in Error state,
+    /// and ensures a minimum percentage of agents are Idle before returning.
+    /// </summary>
+    private async Task WaitForReadyAsync(CancellationToken ct)
+    {
+        // Phase 1: Wait for initial registrations to settle
+        _logger.LogInformation("Waiting {Secs}s for registrations to settle...", ReadinessSettleDelaySecs);
+        await Task.Delay(TimeSpan.FromSeconds(ReadinessSettleDelaySecs), ct);
+
+        LogReadinessStatus("Initial registration");
+
+        // Phase 2: Retry waves for agents stuck in Error
+        for (int wave = 1; wave <= MaxRetryWaves; wave++)
+        {
+            var errorAgents = _agents.Where(a => a.State == AgentState.Error).ToList();
+            if (errorAgents.Count == 0) break;
+
+            _logger.LogInformation(
+                "Retry wave {Wave}/{Max}: re-registering {Count} agents in Error state",
+                wave, MaxRetryWaves, errorAgents.Count);
+
+            // Re-register error agents in small batches (10 at a time for retries)
+            const int retryBatchSize = 10;
+            for (int i = 0; i < errorAgents.Count; i += retryBatchSize)
+            {
+                ct.ThrowIfCancellationRequested();
+                var batch = errorAgents.Skip(i).Take(retryBatchSize).ToList();
+                await Task.WhenAll(batch.Select(a => a.RetryRegisterAsync(ct)));
+            }
+
+            // Wait for retry registrations to settle
+            _logger.LogInformation("Waiting {Secs}s for retry wave {Wave} to settle...", ReadinessSettleDelaySecs, wave);
+            await Task.Delay(TimeSpan.FromSeconds(ReadinessSettleDelaySecs), ct);
+
+            LogReadinessStatus($"Retry wave {wave}");
+        }
+
+        // Phase 3: Final readiness check
+        int idle = IdleAgents;
+        int total = TotalAgents;
+        int readyPercent = total > 0 ? idle * 100 / total : 0;
+
+        if (readyPercent < MinReadyPercent)
+        {
+            int errors = _agents.Count(a => a.State == AgentState.Error);
+            int registering = _agents.Count(a => a.State == AgentState.Registering);
+
+            throw new InvalidOperationException(
+                $"Agent readiness check failed: {idle}/{total} agents Idle ({readyPercent}%), " +
+                $"minimum required {MinReadyPercent}%. " +
+                $"({errors} Error, {registering} still Registering)");
+        }
+
+        _logger.LogInformation(
+            "Readiness gate passed: {Idle}/{Total} agents Idle ({Percent}%)",
+            idle, total, readyPercent);
+    }
+
+    private void LogReadinessStatus(string phase)
+    {
+        int idle = IdleAgents;
+        int errors = _agents.Count(a => a.State == AgentState.Error);
+        int registering = _agents.Count(a => a.State == AgentState.Registering);
+        int total = TotalAgents;
+
+        _logger.LogInformation(
+            "[{Phase}] Agents: {Idle}/{Total} Idle, {Errors} Error, {Registering} Registering",
+            phase, idle, total, errors, registering);
     }
 
     // -------------------------------------------------------------------------

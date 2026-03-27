@@ -271,4 +271,26 @@ public sealed class AgentPoolServiceTests
         stats.Error.Should().Be(0);
         stats.TotalCallsHandled.Should().Be(0);
     }
+
+    // -------------------------------------------------------------------------
+    // Readiness parameters
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void MinReadyPercent_ShouldDefaultTo80()
+    {
+        AgentPoolService.MinReadyPercent.Should().Be(80);
+    }
+
+    [Fact]
+    public void MaxRetryWaves_ShouldDefaultTo2()
+    {
+        AgentPoolService.MaxRetryWaves.Should().Be(2);
+    }
+
+    [Fact]
+    public void ReadinessSettleDelaySecs_ShouldDefaultTo10()
+    {
+        AgentPoolService.ReadinessSettleDelaySecs.Should().Be(10);
+    }
 }

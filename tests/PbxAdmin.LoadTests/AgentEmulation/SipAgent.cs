@@ -113,6 +113,28 @@ public sealed class SipAgent : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Re-attempts registration for an agent currently in Error state.
+    /// Stops the old registration agent and starts a fresh one.
+    /// </summary>
+    public Task RetryRegisterAsync(CancellationToken ct)
+    {
+        if (_state != AgentState.Error)
+        {
+            _logger.LogDebug("Agent {Ext}: RetryRegisterAsync called in state {State}, ignoring", ExtensionId, _state);
+            return Task.CompletedTask;
+        }
+
+        // Stop the old registration agent before creating a new one
+        _regAgent?.Stop();
+        _regAgent = null;
+
+        // Reset state so RegisterAsync accepts the call
+        // (RegisterAsync checks for Offline or Error)
+
+        return RegisterAsync(ct);
+    }
+
     /// <summary>Stops registration and transitions to Offline.</summary>
     public Task UnregisterAsync()
     {
