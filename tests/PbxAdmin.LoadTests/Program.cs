@@ -107,6 +107,9 @@ static async Task<int> RunAsync(
 
     try
     {
+        // Attach metrics to services that generate calls/manage agents
+        context.Scheduler.AttachMetrics(context.Metrics);
+
         // Start agents + PSTN emulator connection
         await StartAgentsAsync(context, agents, logger, cts.Token);
         await ConnectPstnEmulatorAsync(context, logger, cts.Token);

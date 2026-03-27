@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PbxAdmin.LoadTests.Configuration;
+using PbxAdmin.LoadTests.Metrics;
 
 namespace PbxAdmin.LoadTests.CallGeneration;
 
@@ -17,6 +18,7 @@ public sealed class CallPatternScheduler : IAsyncDisposable
     private readonly CallGeneratorService _generator;
     private readonly ILogger<CallPatternScheduler> _logger;
     private readonly Random _random = new();
+    private MetricsCollector? _metrics;
 
     private int _activeCalls;
     private int _totalCallsGenerated;
@@ -38,6 +40,12 @@ public sealed class CallPatternScheduler : IAsyncDisposable
     public bool IsRunning => _isRunning;
 
     public event Action<SchedulerStats>? StatsUpdated;
+
+    /// <summary>
+    /// Attaches a MetricsCollector so call generation events (originated, started,
+    /// ended, failed) are tracked for the report. Call before StartAsync.
+    /// </summary>
+    public void AttachMetrics(MetricsCollector metrics) => _metrics = metrics;
 
     public CallPatternScheduler(
         IOptions<CallPatternOptions> options,
@@ -258,6 +266,8 @@ public sealed class CallPatternScheduler : IAsyncDisposable
 
         Interlocked.Increment(ref _activeCalls);
         Interlocked.Increment(ref _totalCallsGenerated);
+        _metrics?.RecordCallOriginated();
+        _metrics?.RecordCallStarted();
 
         lock (_statsLock)
         {
@@ -273,6 +283,7 @@ public sealed class CallPatternScheduler : IAsyncDisposable
             {
                 _logger.LogWarning(
                     "Call {CallId} not accepted: {Error}", result.CallId, result.ErrorMessage);
+                _metrics?.RecordCallFailed();
             }
 
             // Simulate call duration — in load test scenarios the PSTN emulator
@@ -287,11 +298,13 @@ public sealed class CallPatternScheduler : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error generating call for scenario {Scenario}", scenario);
+            _metrics?.RecordCallFailed();
         }
         finally
         {
             Interlocked.Decrement(ref _activeCalls);
             Interlocked.Increment(ref _totalCallsCompleted);
+            _metrics?.RecordCallEnded();
         }
     }
 
