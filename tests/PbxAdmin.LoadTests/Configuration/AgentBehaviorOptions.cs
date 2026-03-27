@@ -8,7 +8,7 @@ public sealed class AgentBehaviorOptions
     public int MinAgents { get; init; } = 1;
     public int MaxAgents { get; init; } = 300;
     public int RingDelaySecs { get; init; } = 2;
-    public int TalkTimeSecs { get; init; } = 30;
+    public int TalkTimeSecs { get; set; } = 30;
     public int WrapupTimeSecs { get; init; } = 5;
     public bool AutoAnswer { get; init; } = true;
 }

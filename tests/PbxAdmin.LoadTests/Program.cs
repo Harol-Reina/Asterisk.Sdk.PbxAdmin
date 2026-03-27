@@ -47,13 +47,25 @@ var outputOption = new Option<string?>("--output")
     Description = "Path for JSON report output"
 };
 
+var talkTimeOption = new Option<int?>("--talk-time")
+{
+    Description = "Agent talk time in seconds (overrides appsettings AgentBehavior.TalkTimeSecs)"
+};
+
+var maxConcurrentOption = new Option<int?>("--max-concurrent")
+{
+    Description = "Max concurrent calls (overrides appsettings and auto-tune)"
+};
+
 var rootCommand = new RootCommand("PbxAdmin SDK Test Platform — Asterisk load and validation harness")
 {
     scenarioOption,
     agentsOption,
     targetOption,
     durationOption,
-    outputOption
+    outputOption,
+    talkTimeOption,
+    maxConcurrentOption
 };
 
 rootCommand.SetAction(async (parseResult, ct) =>
@@ -63,8 +75,10 @@ rootCommand.SetAction(async (parseResult, ct) =>
     string target = parseResult.GetValue(targetOption)!;
     int duration = parseResult.GetValue(durationOption);
     string? output = parseResult.GetValue(outputOption);
+    int? talkTime = parseResult.GetValue(talkTimeOption);
+    int? maxConcurrent = parseResult.GetValue(maxConcurrentOption);
 
-    Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, ct);
+    Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, talkTime, maxConcurrent, ct);
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
@@ -77,6 +91,8 @@ static async Task<int> RunAsync(
     string target,
     int durationMinutes,
     string? outputPath,
+    int? talkTime,
+    int? maxConcurrent,
     CancellationToken ct)
 {
     Log.Logger = new LoggerConfiguration()
@@ -99,7 +115,30 @@ static async Task<int> RunAsync(
     }
 
     // CLI --duration overrides appsettings.json TestDurationMinutes
-    host.Services.GetRequiredService<IOptions<CallPatternOptions>>().Value.TestDurationMinutes = durationMinutes;
+    var callPatternOpts = host.Services.GetRequiredService<IOptions<CallPatternOptions>>().Value;
+    callPatternOpts.TestDurationMinutes = durationMinutes;
+
+    // Auto-tune: cap MaxConcurrentCalls to agent count (never more calls than agents)
+    if (callPatternOpts.MaxConcurrentCalls > agents)
+    {
+        logger.LogInformation("Auto-tune: MaxConcurrentCalls {Old} → {New} (capped to agent count)",
+            callPatternOpts.MaxConcurrentCalls, agents);
+        callPatternOpts.MaxConcurrentCalls = agents;
+    }
+
+    // CLI overrides (take precedence over auto-tune and appsettings)
+    if (maxConcurrent.HasValue)
+    {
+        callPatternOpts.MaxConcurrentCalls = maxConcurrent.Value;
+        logger.LogInformation("CLI override: MaxConcurrentCalls = {Value}", maxConcurrent.Value);
+    }
+
+    var agentBehaviorOpts = host.Services.GetRequiredService<IOptions<AgentBehaviorOptions>>().Value;
+    if (talkTime.HasValue)
+    {
+        agentBehaviorOpts.TalkTimeSecs = talkTime.Value;
+        logger.LogInformation("CLI override: TalkTimeSecs = {Value}s", talkTime.Value);
+    }
 
     var context = BuildTestContext(host, loggerFactory);
 

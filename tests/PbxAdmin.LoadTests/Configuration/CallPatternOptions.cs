@@ -4,8 +4,8 @@ public sealed class CallPatternOptions
 {
     public const string SectionName = "CallPattern";
 
-    public int CallsPerMinute { get; init; } = 100;
-    public int MaxConcurrentCalls { get; init; } = 300;
+    public int CallsPerMinute { get; set; } = 100;
+    public int MaxConcurrentCalls { get; set; } = 300;
     public int DefaultCallDurationSecs { get; init; } = 180;
     public int MinCallDurationSecs { get; init; } = 30;
     public int MaxCallDurationSecs { get; init; } = 900;
