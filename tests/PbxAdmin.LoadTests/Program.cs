@@ -118,6 +118,9 @@ static async Task<int> RunAsync(
         // Start SDK infrastructure (connect to target PBX, start session tracking)
         await StartSdkAsync(context, host.Services, logger, cts.Token);
 
+        // Start Docker stats collection
+        StartDockerStats(context, loggerFactory);
+
         // Execute scenario
         logger.LogInformation("Executing scenario: {Name} — {Description}", testScenario.Name, testScenario.Description);
         await testScenario.ExecuteAsync(context, cts.Token);
@@ -152,6 +155,8 @@ static async Task<int> RunAsync(
     }
     finally
     {
+        if (context.DockerStats is not null)
+            try { await context.DockerStats.DisposeAsync(); } catch { /* best-effort */ }
         if (context.SdkRuntime is not null)
             try { await SdkHostSetup.StopAsync(context.SdkRuntime); } catch { /* best-effort */ }
         try { await context.AgentPool.DisposeAsync(); } catch { /* best-effort */ }
@@ -291,6 +296,15 @@ static async Task ConnectPstnEmulatorAsync(
     {
         logger.LogWarning(ex, "PSTN emulator connection failed — call generation will not work");
     }
+}
+
+static void StartDockerStats(TestContext context, ILoggerFactory loggerFactory)
+{
+    var collector = new DockerStatsCollector(loggerFactory, context.Metrics);
+    context.DockerStats = collector;
+
+    // Start async but don't await — fire and forget, will be stopped in finally
+    _ = collector.StartAsync(DockerContainerNames.All);
 }
 
 // ─── Banner ───────────────────────────────────────────────────────────────────

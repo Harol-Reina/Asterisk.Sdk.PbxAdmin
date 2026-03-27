@@ -35,4 +35,5 @@ public sealed class TestContext
     public SdkRuntime? SdkRuntime { get; set; }
     public SessionCaptureService? SessionCapture { get; set; }
     public LiveStateValidator? LiveStateValidator { get; set; }
+    public DockerStatsCollector? DockerStats { get; set; }
 }
