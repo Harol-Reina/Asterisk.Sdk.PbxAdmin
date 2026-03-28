@@ -32,6 +32,7 @@ public sealed class SipAgent : IAsyncDisposable
     private CancellationTokenSource? _wrapupCts;
     private volatile bool _draining;
     private AgentState _state = AgentState.Offline;
+    private readonly Random _random = new();
 
     public string ExtensionId { get; }
     public AgentState State => _state;
@@ -272,7 +273,8 @@ public sealed class SipAgent : IAsyncDisposable
 
         if (_behavior.AutoAnswer)
         {
-            await Task.Delay(TimeSpan.FromSeconds(_behavior.RingDelaySecs));
+            int ringDelay = _random.Next(_behavior.RingDelaySecs, _behavior.RingDelayMaxSecs + 1);
+            await Task.Delay(TimeSpan.FromSeconds(ringDelay));
 
             if (_state == AgentState.Ringing && !_inviteCancelled)
             {
@@ -421,9 +423,15 @@ public sealed class SipAgent : IAsyncDisposable
 
     private async Task AutoHangupAfterTalkTimeAsync(CancellationToken ct)
     {
+        // Apply ±variance% to talk time for human-like behavior
+        int baseTalkTime = _behavior.TalkTimeSecs;
+        double variance = baseTalkTime * _behavior.TalkTimeVariancePercent / 100.0;
+        int actualTalkTime = baseTalkTime + _random.Next((int)-variance, (int)variance + 1);
+        actualTalkTime = Math.Max(1, actualTalkTime);
+
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(_behavior.TalkTimeSecs), ct);
+            await Task.Delay(TimeSpan.FromSeconds(actualTalkTime), ct);
         }
         catch (OperationCanceledException)
         {
@@ -459,7 +467,8 @@ public sealed class SipAgent : IAsyncDisposable
 
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(_behavior.WrapupTimeSecs), token);
+            int wrapupTime = _random.Next(_behavior.WrapupTimeSecs, _behavior.WrapupMaxSecs + 1);
+            await Task.Delay(TimeSpan.FromSeconds(wrapupTime), token);
 
             if (!token.IsCancellationRequested)
             {
