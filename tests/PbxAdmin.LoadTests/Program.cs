@@ -12,6 +12,7 @@ using PbxAdmin.LoadTests.Sdk;
 using PbxAdmin.LoadTests.Validation;
 using PbxAdmin.LoadTests.Validation.Layer1;
 using PbxAdmin.LoadTests.Validation.Layer2;
+using PbxAdmin.LoadTests.Auditing;
 using PbxAdmin.LoadTests.Validation.Layer2.Repositories;
 using Serilog;
 using MsLogger = Microsoft.Extensions.Logging.ILogger;
@@ -57,6 +58,12 @@ var maxConcurrentOption = new Option<int?>("--max-concurrent")
     Description = "Max concurrent calls (overrides appsettings and auto-tune)"
 };
 
+var auditIntervalOption = new Option<int>("--audit-interval")
+{
+    Description = "Audit snapshot interval in seconds (0 to disable, min 5)",
+    DefaultValueFactory = _ => 10
+};
+
 var rootCommand = new RootCommand("PbxAdmin SDK Test Platform — Asterisk load and validation harness")
 {
     scenarioOption,
@@ -65,7 +72,8 @@ var rootCommand = new RootCommand("PbxAdmin SDK Test Platform — Asterisk load 
     durationOption,
     outputOption,
     talkTimeOption,
-    maxConcurrentOption
+    maxConcurrentOption,
+    auditIntervalOption
 };
 
 rootCommand.SetAction(async (parseResult, ct) =>
@@ -77,8 +85,9 @@ rootCommand.SetAction(async (parseResult, ct) =>
     string? output = parseResult.GetValue(outputOption);
     int? talkTime = parseResult.GetValue(talkTimeOption);
     int? maxConcurrent = parseResult.GetValue(maxConcurrentOption);
+    int auditInterval = parseResult.GetValue(auditIntervalOption);
 
-    Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, talkTime, maxConcurrent, ct);
+    Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, talkTime, maxConcurrent, auditInterval, ct);
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
@@ -93,6 +102,7 @@ static async Task<int> RunAsync(
     string? outputPath,
     int? talkTime,
     int? maxConcurrent,
+    int auditIntervalSecs,
     CancellationToken ct)
 {
     Log.Logger = new LoggerConfiguration()
@@ -166,6 +176,14 @@ static async Task<int> RunAsync(
     var context = BuildTestContext(host, loggerFactory);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+    // Infrastructure auditor — runs alongside the test
+    AuditMonitorService? auditor = null;
+    if (auditIntervalSecs > 0 && !string.IsNullOrWhiteSpace(outputPath))
+    {
+        auditor = new AuditMonitorService(loggerFactory);
+        await auditor.StartAsync(auditIntervalSecs, outputPath, cts.Token);
+    }
     // Margin: drain (talk + wrapup + 10s) + validation (DB flush 5s + queries ~30s)
     int drainSecs = agentBehaviorOpts.TalkTimeSecs + agentBehaviorOpts.WrapupMaxSecs + 10;
     int marginMinutes = (drainSecs / 60) + 2; // +2 for validation queries
