@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using PbxAdmin.LoadTests.AgentEmulation;
 using PbxAdmin.LoadTests.Configuration;
 using PbxAdmin.LoadTests.Metrics;
 
@@ -19,6 +20,7 @@ public sealed class CallPatternScheduler : IAsyncDisposable
     private readonly ILogger<CallPatternScheduler> _logger;
     private readonly Random _random = new();
     private MetricsCollector? _metrics;
+    private readonly AgentPoolService? _agentPool;
 
     private int _activeCalls;
     private int _totalCallsGenerated;
@@ -50,11 +52,13 @@ public sealed class CallPatternScheduler : IAsyncDisposable
     public CallPatternScheduler(
         IOptions<CallPatternOptions> options,
         CallGeneratorService generator,
-        ILogger<CallPatternScheduler> logger)
+        ILogger<CallPatternScheduler> logger,
+        AgentPoolService? agentPool = null)
     {
         _options = options.Value;
         _generator = generator;
         _logger = logger;
+        _agentPool = agentPool;
 
         foreach (var scenario in _options.ScenarioMix.Keys)
             _scenarioCounts[scenario] = 0;
@@ -227,7 +231,20 @@ public sealed class CallPatternScheduler : IAsyncDisposable
         while (!ct.IsCancellationRequested)
         {
             TimeSpan elapsed = DateTime.UtcNow - _startedAt;
-            int currentTarget = CalculateRampTarget(elapsed, _targetConcurrent, _options.RampUpMinutes);
+
+            // Target follows agent availability when pool is connected,
+            // otherwise falls back to time-based ramp
+            int currentTarget;
+            if (_agentPool is not null)
+            {
+                int available = _agentPool.IdleAgents + _agentPool.InCallAgents
+                              + _agentPool.RingingAgents;
+                currentTarget = Math.Min(available, _targetConcurrent);
+            }
+            else
+            {
+                currentTarget = CalculateRampTarget(elapsed, _targetConcurrent, _options.RampUpMinutes);
+            }
 
             int active = Volatile.Read(ref _activeCalls);
             int deficit = currentTarget - active;
