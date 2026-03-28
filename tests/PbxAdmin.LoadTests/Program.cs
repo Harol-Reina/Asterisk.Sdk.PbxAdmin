@@ -166,7 +166,14 @@ static async Task<int> RunAsync(
     var context = BuildTestContext(host, loggerFactory);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-    cts.CancelAfter(TimeSpan.FromMinutes(durationMinutes + 5));
+    // Margin: drain (talk + wrapup + 10s) + validation (DB flush 5s + queries ~30s)
+    int drainSecs = agentBehaviorOpts.TalkTimeSecs + agentBehaviorOpts.WrapupMaxSecs + 10;
+    int marginMinutes = (drainSecs / 60) + 2; // +2 for validation queries
+    int testDurationMinutes = callPatternOpts.TestDurationMinutes;
+    int totalMinutes = testDurationMinutes + marginMinutes;
+    cts.CancelAfter(TimeSpan.FromMinutes(totalMinutes));
+    logger.LogInformation("Test timeout: {Duration} min + {Margin} min margin = {Total} min",
+        testDurationMinutes, marginMinutes, totalMinutes);
 
     try
     {
