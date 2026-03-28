@@ -24,6 +24,31 @@ public sealed class MetricsCollector
         _logger = logger;
     }
 
+    public enum TestPhase { Ramp, Sustain, Drain }
+
+    private TestPhase _currentPhase = TestPhase.Ramp;
+    private DateTime _sustainStart;
+    private DateTime _sustainEnd;
+
+    public TestPhase CurrentPhase => _currentPhase;
+    public DateTime SustainStart => _sustainStart;
+    public DateTime SustainEnd => _sustainEnd;
+
+    public void EnterSustainPhase()
+    {
+        _currentPhase = TestPhase.Sustain;
+        _sustainStart = DateTime.UtcNow;
+        _logger.LogInformation("[Metrics] Entered SUSTAIN phase");
+    }
+
+    public void EnterDrainPhase()
+    {
+        _sustainEnd = DateTime.UtcNow;
+        _currentPhase = TestPhase.Drain;
+        _logger.LogInformation("[Metrics] Entered DRAIN phase (sustain lasted {Duration:mm\\:ss})",
+            _sustainEnd - _sustainStart);
+    }
+
     // -------------------------------------------------------------------------
     // Real-time counters (thread-safe reads via Volatile)
     // -------------------------------------------------------------------------
