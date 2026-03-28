@@ -274,12 +274,11 @@ public sealed class CallPatternScheduler : IAsyncDisposable
     {
         string scenario = PickScenario(_options.ScenarioMix, _random);
         string destination = PickScenarioDestination(scenario);
-        int durationSecs = PickCallDuration(
-            scenario,
-            _options.DefaultCallDurationSecs,
-            _options.MinCallDurationSecs,
-            _options.MaxCallDurationSecs,
-            _random);
+        // Apply ±20% variance to match agent behavior timing
+        int baseDuration = _options.DefaultCallDurationSecs;
+        int variance = baseDuration / 5; // 20%
+        int durationSecs = baseDuration + _random.Next(-variance, variance + 1);
+        durationSecs = Math.Max(_options.MinCallDurationSecs, Math.Min(durationSecs, _options.MaxCallDurationSecs));
 
         Interlocked.Increment(ref _activeCalls);
         Interlocked.Increment(ref _totalCallsGenerated);
