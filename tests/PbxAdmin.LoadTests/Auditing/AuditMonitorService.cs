@@ -131,15 +131,21 @@ public sealed class AuditMonitorService : IAsyncDisposable
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
+        _logger.LogInformation("Audit loop started, ct.IsCancellationRequested={IsCancelled}", ct.IsCancellationRequested);
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(_intervalSeconds), ct);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                // Spurious cancellation — continue loop
+                continue;
             }
 
             try
@@ -157,6 +163,9 @@ public sealed class AuditMonitorService : IAsyncDisposable
                 _logger.LogWarning(ex, "Audit snapshot #{Seq} failed — continuing", _sequenceNumber);
             }
         }
+
+        _logger.LogInformation("Audit loop ended after {Count} snapshots. ct.IsCancellationRequested={IsCancelled}",
+            _snapshots.Count, ct.IsCancellationRequested);
     }
 
     private async Task<AuditSnapshot> CollectSnapshotAsync(CancellationToken ct)
