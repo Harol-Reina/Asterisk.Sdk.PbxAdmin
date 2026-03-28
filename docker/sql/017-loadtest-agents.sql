@@ -3,5 +3,5 @@
 -- (AgentProvisioningService) based on --agents N. No static agents are pre-loaded.
 
 INSERT INTO queue_table (name, strategy, timeout, ringinuse, wrapuptime, servicelevel, maxlen) VALUES
-    ('loadtest', 'leastrecent', 15, 'no', 5, 20, 0)
+    ('loadtest', 'rrmemory', 15, 'no', 5, 20, 0)
 ON CONFLICT (name) DO NOTHING;

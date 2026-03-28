@@ -136,7 +136,7 @@ public sealed class AgentProvisioningService : IAsyncDisposable
             int queueConfigId = await conn.ExecuteScalarAsync<int>(new CommandDefinition(
                 """
                 INSERT INTO queues_config (server_id, name, strategy, timeout, wrapuptime, servicelevel, ringinuse, notes)
-                VALUES (@ServerId, @QueueName, 'leastrecent', 15, 5, 20, 'no', 'Auto-created by load test provisioning')
+                VALUES (@ServerId, @QueueName, 'rrmemory', 15, 5, 20, 'no', 'Auto-created by load test provisioning')
                 ON CONFLICT (server_id, name) DO UPDATE SET notes = EXCLUDED.notes
                 RETURNING id
                 """,
