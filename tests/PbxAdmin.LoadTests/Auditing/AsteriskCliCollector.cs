@@ -28,7 +28,7 @@ public sealed class AsteriskCliCollector
         var odbcTask = RunDockerExecAsync(DockerContainerNames.PbxRealtime, "odbc show", ct);
         var queueTask = RunDockerExecAsync(DockerContainerNames.PbxRealtime, $"queue show {queueName}", ct);
         var endpointsTask = RunDockerExecAsync(DockerContainerNames.PbxRealtime, "pjsip show endpoints", ct);
-        var rtpTask = RunDockerExecAsync(DockerContainerNames.PbxRealtime, "rtp show stats", ct);
+        var rtpTask = RunDockerExecAsync(DockerContainerNames.PbxRealtime, "pjsip show channelstats", ct);
 
         await Task.WhenAll(channelsTask, odbcTask, queueTask, endpointsTask, rtpTask);
 
