@@ -118,12 +118,25 @@ static async Task<int> RunAsync(
     var callPatternOpts = host.Services.GetRequiredService<IOptions<CallPatternOptions>>().Value;
     callPatternOpts.TestDurationMinutes = durationMinutes;
 
-    // Auto-tune: cap MaxConcurrentCalls to agent count (never more calls than agents)
-    if (callPatternOpts.MaxConcurrentCalls > agents)
+    var agentBehaviorOpts = host.Services.GetRequiredService<IOptions<AgentBehaviorOptions>>().Value;
+
+    // Auto-adjust duration for progressive agent onboarding
+    int minDuration = AgentPoolService.CalculateMinDurationMinutes(agents, agentBehaviorOpts.WaveSize);
+    if (callPatternOpts.TestDurationMinutes < minDuration)
     {
-        logger.LogInformation("Auto-tune: MaxConcurrentCalls {Old} → {New} (capped to agent count)",
-            callPatternOpts.MaxConcurrentCalls, agents);
-        callPatternOpts.MaxConcurrentCalls = agents;
+        logger.LogWarning(
+            "{Agents} agents need at least {Min} min. Adjusting duration from {Current} to {MinDuration}",
+            agents, minDuration, callPatternOpts.TestDurationMinutes, minDuration);
+        callPatternOpts.TestDurationMinutes = minDuration;
+    }
+
+    // Cap max concurrent to 80% of agents (PSTN emulator ceiling)
+    int maxConcurrentCap = (int)Math.Ceiling(agents * 0.8);
+    if (callPatternOpts.MaxConcurrentCalls > maxConcurrentCap)
+    {
+        logger.LogInformation("Auto-tune: MaxConcurrentCalls {Old} → {New} (80% of {Agents} agents)",
+            callPatternOpts.MaxConcurrentCalls, maxConcurrentCap, agents);
+        callPatternOpts.MaxConcurrentCalls = maxConcurrentCap;
     }
 
     // CLI overrides (take precedence over auto-tune and appsettings)
@@ -133,7 +146,6 @@ static async Task<int> RunAsync(
         logger.LogInformation("CLI override: MaxConcurrentCalls = {Value}", maxConcurrent.Value);
     }
 
-    var agentBehaviorOpts = host.Services.GetRequiredService<IOptions<AgentBehaviorOptions>>().Value;
     if (talkTime.HasValue)
     {
         agentBehaviorOpts.TalkTimeSecs = talkTime.Value;
@@ -167,6 +179,21 @@ static async Task<int> RunAsync(
         // Provision PJSIP endpoints + queue members, reload Asterisk, then register SIP agents
         await ProvisionAgentsAsync(context, agents, target, logger, cts.Token);
         await StartAgentsAsync(context, agents, logger, cts.Token);
+
+        // Refresh SDK live state after all waves have registered
+        if (context.SdkRuntime is not null)
+        {
+            try
+            {
+                await context.SdkRuntime.Server.RequestInitialStateAsync(cts.Token);
+                logger.LogInformation("SDK live state refreshed with {Agents} registered agents", agents);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "SDK state refresh failed — metrics may be incomplete");
+            }
+        }
+
         await ConnectPstnEmulatorAsync(context, logger, cts.Token);
 
         // Start Docker stats collection
@@ -309,10 +336,6 @@ static async Task ProvisionAgentsAsync(
         if (context.SdkRuntime is not null)
         {
             await provisioning.ReloadAsteriskAsync(context.SdkRuntime.Connection, ct);
-
-            // Asterisk does not emit QueueMemberAdded AMI events for realtime-loaded
-            // members, so re-query live state to discover the newly provisioned agents.
-            await context.SdkRuntime.Server.RequestInitialStateAsync(ct);
         }
 
         logger.LogInformation("Provisioned {N} agents in PostgreSQL", agents);
