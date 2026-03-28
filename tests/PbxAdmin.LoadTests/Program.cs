@@ -193,6 +193,7 @@ static async Task<int> RunAsync(
     logger.LogInformation("Test timeout: {Duration} min + {Margin} min margin = {Total} min",
         testDurationMinutes, marginMinutes, totalMinutes);
 
+    int exitCode = 1;
     try
     {
         // Attach metrics to services that generate calls/manage agents
@@ -243,22 +244,44 @@ static async Task<int> RunAsync(
             logger.LogInformation("JSON report written to {Path}", outputPath);
         }
 
-        var passed = report.FailedChecks == 0;
-        logger.LogInformation("Scenario {Name} completed. Result={Result}", testScenario.Name, passed ? "PASSED" : "FAILED");
-        return passed ? 0 : 1;
+        exitCode = report.FailedChecks == 0 ? 0 : 1;
+        logger.LogInformation("Scenario {Name} completed. Result={Result}", testScenario.Name, exitCode == 0 ? "PASSED" : "FAILED");
     }
     catch (OperationCanceledException ex)
     {
         logger.LogError(ex, "Test timed out.");
-        return 1;
     }
     catch (Exception ex)
     {
         logger.LogError(ex, "Unhandled exception during scenario '{Scenario}'.", scenario);
-        return 1;
     }
     finally
     {
+        // Write best-effort report even on timeout/crash — metrics collected so far are still valuable
+        if (exitCode != 0 && !string.IsNullOrWhiteSpace(outputPath))
+        {
+            try
+            {
+                var elapsed = context.TestEndTime == default
+                    ? DateTime.UtcNow - context.TestStartTime
+                    : context.TestEndTime - context.TestStartTime;
+                var metrics = context.Metrics.GetSummary(elapsed);
+                var dockerStats = context.DockerStats?.GetSummary();
+                ReportGenerator.WriteJsonReport(
+                    new ValidationReport { TestStart = context.TestStartTime, TestEnd = DateTime.UtcNow },
+                    metrics, dockerStats, outputPath);
+                logger.LogInformation("Partial report written to {Path} (test did not complete cleanly)", outputPath);
+            }
+            catch (Exception rex)
+            {
+                logger.LogWarning(rex, "Failed to write partial report");
+            }
+        }
+
+        // Stop audit monitor — writes consolidated .audit.json
+        if (auditor is not null)
+            try { await auditor.DisposeAsync(); } catch { /* best-effort */ }
+
         if (context.DockerStats is not null)
             try { await context.DockerStats.DisposeAsync(); } catch { /* best-effort */ }
         if (context.SdkRuntime is not null)
@@ -269,6 +292,8 @@ static async Task<int> RunAsync(
         try { await context.CallGenerator.DisposeAsync(); } catch { /* best-effort */ }
         await Log.CloseAndFlushAsync();
     }
+
+    return exitCode;
 }
 
 // ─── Host / DI setup ─────────────────────────────────────────────────────────
