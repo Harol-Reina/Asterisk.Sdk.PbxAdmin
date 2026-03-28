@@ -24,11 +24,8 @@ public sealed class AgentPoolService : IAsyncDisposable
     private List<SipAgent> _agents = [];
     private bool _started;
 
-    // Readiness gate configuration
-    internal const int MinReadyPercent = 80;
-    internal const int MaxRetryWaves = 2;
-    internal const int ReadinessTimeoutSecs = 60;
-    internal const int ReadinessPollIntervalSecs = 2;
+
+
 
     public AgentPoolService(
         IOptions<LoadTestOptions> loadOptions,
@@ -100,8 +97,8 @@ public sealed class AgentPoolService : IAsyncDisposable
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Creates N agents sharing one SIPTransport, registers them with Asterisk
-    /// in batches of 10, and logs a summary on completion.
+    /// Creates N agents sharing one SIPTransport, registers them in progressive
+    /// waves with per-wave readiness polling, and wires metrics.
     /// </summary>
     public async Task StartAsync(int agentCount, CancellationToken ct)
     {
@@ -114,57 +111,65 @@ public sealed class AgentPoolService : IAsyncDisposable
                 $"agentCount {agentCount} exceeds MaxAgents {_behaviorOptions.MaxAgents}.");
 
         _transport = new SIPTransport();
-        // Bind to an ephemeral port by passing port 0.
         _transport.AddSIPChannel(new SIPUDPChannel(IPAddress.Any, 0));
         _transport.SIPTransportRequestReceived += OnTransportRequestReceived;
 
         _agents = new List<SipAgent>(agentCount);
-
         var serverHost = _loadOptions.TargetPbxAmi.Host;
+        int sipPort = GetSipPort(_loadOptions.TargetServer);
 
+        // Create all agents upfront (lightweight, no registration yet)
         for (int i = 0; i < agentCount; i++)
         {
             var (extensionId, password) = GetAgentCredentials(i, _loadOptions.TargetServer);
             var agentLogger = _loggerFactory.CreateLogger($"SipAgent.{extensionId}");
-            int sipPort = GetSipPort(_loadOptions.TargetServer);
 
             var agent = new SipAgent(
-                extensionId,
-                password,
-                serverHost,
-                sipPort,
-                _transport,
-                _behaviorOptions,
-                agentLogger);
+                extensionId, password, serverHost, sipPort,
+                _transport, _behaviorOptions, agentLogger);
 
             _agents.Add(agent);
         }
 
-        // Register in adaptive batches to balance speed vs Asterisk load
-        int batchSize = CalculateBatchSize(agentCount);
-        _logger.LogInformation("Registering {N} agents in batches of {Batch}", agentCount, batchSize);
-
-        for (int i = 0; i < _agents.Count; i += batchSize)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var batch = _agents.Skip(i).Take(batchSize).ToList();
-            await Task.WhenAll(batch.Select(a => a.RegisterAsync(ct)));
-        }
-
-        // Wire metrics and mark started before readiness gate so state
-        // transitions are tracked even if the gate fails
+        // Wire metrics before waves so all state transitions are tracked
         _metrics?.SetTotalAgents(agentCount);
         foreach (var agent in _agents)
             WireAgentMetrics(agent);
         _started = true;
 
-        // Wait for agents to register and retry failures
-        await WaitForReadyAsync(ct);
+        // Register in progressive waves
+        int waveSize = _behaviorOptions.WaveSize;
+        int waveCount = CalculateWaveCount(agentCount, waveSize);
+
+        _logger.LogInformation(
+            "Registering {N} agents in {Waves} waves of {Size} (adaptive interval)",
+            agentCount, waveCount, waveSize);
+
+        for (int w = 0; w < waveCount; w++)
+        {
+            ct.ThrowIfCancellationRequested();
+            int start = w * waveSize;
+            int end = Math.Min(start + waveSize, agentCount);
+            var wave = _agents.GetRange(start, end - start);
+
+            _logger.LogInformation("Wave {Wave}/{Total}: registering agents {First}-{Last}",
+                w + 1, waveCount, _agents[start].ExtensionId, _agents[end - 1].ExtensionId);
+
+            // Fire registration for all agents in wave
+            foreach (var agent in wave)
+                await agent.RegisterAsync(ct);
+
+            // Poll until wave settles
+            await WaitForWaveReadyAsync(wave, w + 1, ct);
+
+            // Stabilization delay between waves (skip after last wave)
+            if (w < waveCount - 1)
+                await Task.Delay(TimeSpan.FromSeconds(_behaviorOptions.WaveStabilizationSecs), ct);
+        }
 
         int idle = IdleAgents;
         int errors = _agents.Count(a => a.State == AgentState.Error);
-        _logger.LogInformation("Registered {N} agents ({Idle} idle, {Errors} errors)", agentCount, idle, errors);
+        _logger.LogInformation("All waves complete: {N} agents ({Idle} idle, {Errors} errors)", agentCount, idle, errors);
     }
 
     /// <summary>
@@ -189,97 +194,35 @@ public sealed class AgentPoolService : IAsyncDisposable
         _logger.LogInformation("AgentPoolService stopped: all agents unregistered and disposed");
     }
 
-    /// <summary>
-    /// Polls agent state until enough are Idle, retries agents in Error state,
-    /// and ensures a minimum percentage of agents are Idle before returning.
-    /// </summary>
-    private async Task WaitForReadyAsync(CancellationToken ct)
+    private async Task WaitForWaveReadyAsync(List<SipAgent> wave, int waveNumber, CancellationToken ct)
     {
-        int total = TotalAgents;
+        int total = wave.Count;
+        int required = (int)Math.Ceiling(total * WaveReadyPercent / 100.0);
+        var deadline = DateTime.UtcNow.AddSeconds(WaveReadinessTimeoutSecs);
 
-        // Phase 1: Poll until agents settle (Idle or Error, not Registering)
-        _logger.LogInformation("Waiting up to {Secs}s for {N} agents to register (polling every {Poll}s)...",
-            ReadinessTimeoutSecs, total, ReadinessPollIntervalSecs);
-
-        await PollUntilSettledAsync(total, "Initial registration", ct);
-        LogReadinessStatus("After initial wait");
-
-        // Phase 2: Retry waves for agents stuck in Error
-        await RetryErrorAgentsAsync(ct);
-
-        // Phase 3: Final readiness check
-        int finalIdle = IdleAgents;
-        int finalReadyPercent = total > 0 ? finalIdle * 100 / total : 0;
-
-        if (finalReadyPercent < MinReadyPercent)
-        {
-            int errors = _agents.Count(a => a.State == AgentState.Error);
-            int registering = _agents.Count(a => a.State == AgentState.Registering);
-
-            throw new InvalidOperationException(
-                $"Agent readiness check failed: {finalIdle}/{total} agents Idle ({finalReadyPercent}%), " +
-                $"minimum required {MinReadyPercent}%. " +
-                $"({errors} Error, {registering} still Registering)");
-        }
-
-        _logger.LogInformation(
-            "Readiness gate passed: {Idle}/{Total} agents Idle ({Percent}%)",
-            finalIdle, total, finalReadyPercent);
-    }
-
-    private async Task PollUntilSettledAsync(int total, string phase, CancellationToken ct)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(ReadinessTimeoutSecs);
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
-            await Task.Delay(TimeSpan.FromSeconds(ReadinessPollIntervalSecs), ct);
+            await Task.Delay(TimeSpan.FromSeconds(WaveReadinessPollSecs), ct);
 
-            int idle = IdleAgents;
-            int registering = _agents.Count(a => a.State == AgentState.Registering);
-            int readyPercent = total > 0 ? idle * 100 / total : 0;
+            int idle = wave.Count(a => a.State == AgentState.Idle);
+            int errors = wave.Count(a => a.State == AgentState.Error);
+            int registering = wave.Count(a => a.State == AgentState.Registering);
 
-            if (registering == 0 || readyPercent >= MinReadyPercent)
+            if (idle >= required || registering == 0)
             {
-                LogReadinessStatus(phase);
+                _logger.LogInformation(
+                    "Wave {Wave} ready: {Idle}/{Total} Idle, {Errors} Error",
+                    waveNumber, idle, total, errors);
                 return;
             }
         }
-    }
 
-    private async Task RetryErrorAgentsAsync(CancellationToken ct)
-    {
-        for (int wave = 1; wave <= MaxRetryWaves; wave++)
-        {
-            var errorAgents = _agents.Where(a => a.State == AgentState.Error).ToList();
-            if (errorAgents.Count == 0) break;
-
-            _logger.LogInformation(
-                "Retry wave {Wave}/{Max}: re-registering {Count} agents in Error state",
-                wave, MaxRetryWaves, errorAgents.Count);
-
-            const int retryBatchSize = 10;
-            for (int i = 0; i < errorAgents.Count; i += retryBatchSize)
-            {
-                ct.ThrowIfCancellationRequested();
-                var batch = errorAgents.Skip(i).Take(retryBatchSize).ToList();
-                await Task.WhenAll(batch.Select(a => a.RetryRegisterAsync(ct)));
-            }
-
-            await PollUntilSettledAsync(TotalAgents, $"Retry wave {wave}", ct);
-        }
-    }
-
-    private void LogReadinessStatus(string phase)
-    {
-        int idle = IdleAgents;
-        int errors = _agents.Count(a => a.State == AgentState.Error);
-        int registering = _agents.Count(a => a.State == AgentState.Registering);
-        int total = TotalAgents;
-
-        _logger.LogInformation(
-            "[{Phase}] Agents: {Idle}/{Total} Idle, {Errors} Error, {Registering} Registering",
-            phase, idle, total, errors, registering);
+        // Timeout — log warning but continue (agents will register via SIPSorcery retry)
+        int finalIdle = wave.Count(a => a.State == AgentState.Idle);
+        _logger.LogWarning(
+            "Wave {Wave} timeout: {Idle}/{Total} Idle after {Timeout}s — continuing",
+            waveNumber, finalIdle, total, WaveReadinessTimeoutSecs);
     }
 
     // -------------------------------------------------------------------------
@@ -327,6 +270,10 @@ public sealed class AgentPoolService : IAsyncDisposable
     // Internal helpers (testable without SIP)
     // -------------------------------------------------------------------------
 
+    internal const int WaveReadyPercent = 80;
+    internal const int WaveReadinessTimeoutSecs = 60;
+    internal const int WaveReadinessPollSecs = 2;
+
     /// <summary>
     /// Returns the extension ID and password for the Nth agent (zero-based index)
     /// based on the target server type.
@@ -344,6 +291,12 @@ public sealed class AgentPoolService : IAsyncDisposable
         <= 150 => 20,
         _ => 30
     };
+
+    internal static int CalculateWaveCount(int agentCount, int waveSize)
+        => (agentCount + waveSize - 1) / waveSize;
+
+    internal static int CalculateMinDurationMinutes(int agentCount, int waveSize)
+        => CalculateWaveCount(agentCount, waveSize) + 5;
 
     internal static (string extensionId, string password) GetAgentCredentials(int index, string targetServer)
     {

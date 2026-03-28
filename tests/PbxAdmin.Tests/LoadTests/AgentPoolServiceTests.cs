@@ -273,30 +273,49 @@ public sealed class AgentPoolServiceTests
     }
 
     // -------------------------------------------------------------------------
-    // Readiness parameters
+    // Wave configuration
     // -------------------------------------------------------------------------
 
     [Fact]
-    public void MinReadyPercent_ShouldDefaultTo80()
+    public void WaveReadyPercent_ShouldDefaultTo80()
     {
-        AgentPoolService.MinReadyPercent.Should().Be(80);
+        AgentPoolService.WaveReadyPercent.Should().Be(80);
     }
 
     [Fact]
-    public void MaxRetryWaves_ShouldDefaultTo2()
+    public void WaveReadinessTimeoutSecs_ShouldDefaultTo60()
     {
-        AgentPoolService.MaxRetryWaves.Should().Be(2);
+        AgentPoolService.WaveReadinessTimeoutSecs.Should().Be(60);
     }
 
     [Fact]
-    public void ReadinessTimeoutSecs_ShouldDefaultTo60()
+    public void WaveReadinessPollSecs_ShouldDefaultTo2()
     {
-        AgentPoolService.ReadinessTimeoutSecs.Should().Be(60);
+        AgentPoolService.WaveReadinessPollSecs.Should().Be(2);
     }
 
-    [Fact]
-    public void ReadinessPollIntervalSecs_ShouldDefaultTo2()
+    [Theory]
+    [InlineData(10, 20, 1)]
+    [InlineData(20, 20, 1)]
+    [InlineData(21, 20, 2)]
+    [InlineData(50, 20, 3)]
+    [InlineData(100, 20, 5)]
+    [InlineData(200, 20, 10)]
+    [InlineData(300, 20, 15)]
+    public void CalculateWaveCount_ShouldCeilDivide(int agentCount, int waveSize, int expectedWaves)
     {
-        AgentPoolService.ReadinessPollIntervalSecs.Should().Be(2);
+        int waves = AgentPoolService.CalculateWaveCount(agentCount, waveSize);
+        waves.Should().Be(expectedWaves);
+    }
+
+    [Theory]
+    [InlineData(50, 20, 8)]
+    [InlineData(100, 20, 10)]
+    [InlineData(200, 20, 15)]
+    [InlineData(300, 20, 20)]
+    public void CalculateMinDuration_ShouldIncludeRampAndSustain(int agentCount, int waveSize, int expectedMinutes)
+    {
+        int min = AgentPoolService.CalculateMinDurationMinutes(agentCount, waveSize);
+        min.Should().Be(expectedMinutes);
     }
 }
