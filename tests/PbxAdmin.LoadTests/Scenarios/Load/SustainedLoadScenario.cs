@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Logging;
+using PbxAdmin.LoadTests.AgentEmulation;
+using PbxAdmin.LoadTests.Metrics;
 using PbxAdmin.LoadTests.Validation;
 using PbxAdmin.LoadTests.Validation.Layer3;
 
@@ -45,9 +47,12 @@ public sealed class SustainedLoadScenario : ITestScenario
                 stats.Elapsed,
                 stats.Remaining);
 
-        // Force immediate full load — no ramp-up
-        context.CallPattern.RampUpMinutes = 0;
         await context.Scheduler.StartAsync(context.CallPattern.MaxConcurrentCalls, ct);
+
+        // Calculate when ramp ends (all waves registered)
+        int waveCount = AgentPoolService.CalculateWaveCount(
+            context.AgentPool.TotalAgents, context.AgentBehavior.WaveSize);
+        var rampEndEstimate = context.TestStartTime + TimeSpan.FromMinutes(waveCount);
 
         var progressTimer = DateTime.UtcNow;
         var answerRateSnapshots = new List<double>();
@@ -65,33 +70,9 @@ public sealed class SustainedLoadScenario : ITestScenario
 
                 if ((DateTime.UtcNow - progressTimer).TotalSeconds >= ProgressIntervalSecs)
                 {
-                    var poolStats = context.AgentPool.GetStats();
-                    int currentGenerated = context.Scheduler.TotalCallsGenerated;
-                    int windowCalls = currentGenerated - lastGenerated;
-                    lastGenerated = currentGenerated;
-
-                    // Track per-window answer rate from pool stats
-                    int currentAnswered = poolStats.TotalCallsHandled;
-                    int windowAnswered = currentAnswered - lastAnswered;
-                    lastAnswered = currentAnswered;
-
-                    if (windowCalls > 0)
-                    {
-                        double windowRate = (double)windowAnswered / windowCalls * 100;
-                        answerRateSnapshots.Add(windowRate);
-                    }
-
-                    logger.LogInformation(
-                        "[{Scenario}] Progress: Active={Active}/{Target}, Idle={Idle}, Ringing={Ringing}, InCall={InCall}, Wrapup={Wrapup}, Handled={Handled}",
-                        Name,
-                        context.Scheduler.ActiveCalls,
-                        context.Scheduler.TargetConcurrent,
-                        poolStats.Idle,
-                        poolStats.Ringing,
-                        poolStats.InCall,
-                        poolStats.Wrapup,
-                        poolStats.TotalCallsHandled);
-
+                    RecordProgressWindow(
+                        context, logger, rampEndEstimate,
+                        answerRateSnapshots, ref lastGenerated, ref lastAnswered);
                     progressTimer = DateTime.UtcNow;
                 }
             }
@@ -102,6 +83,7 @@ public sealed class SustainedLoadScenario : ITestScenario
         }
 
         await context.Scheduler.StopAsync();
+        context.Metrics.EnterDrainPhase();
 
         // Drain: stop accepting new calls and wait for active ones to finish
         context.AgentPool.BeginDrain();
@@ -122,6 +104,47 @@ public sealed class SustainedLoadScenario : ITestScenario
             "[{Scenario}] Execution complete: TotalGenerated={Generated}",
             Name,
             context.Scheduler.TotalCallsGenerated);
+    }
+
+    private void RecordProgressWindow(
+        TestContext context,
+        ILogger logger,
+        DateTime rampEndEstimate,
+        List<double> answerRateSnapshots,
+        ref int lastGenerated,
+        ref int lastAnswered)
+    {
+        var poolStats = context.AgentPool.GetStats();
+        int currentGenerated = context.Scheduler.TotalCallsGenerated;
+        int windowCalls = currentGenerated - lastGenerated;
+        lastGenerated = currentGenerated;
+
+        int currentAnswered = poolStats.TotalCallsHandled;
+        int windowAnswered = currentAnswered - lastAnswered;
+        lastAnswered = currentAnswered;
+
+        if (windowCalls > 0)
+            answerRateSnapshots.Add((double)windowAnswered / windowCalls * 100);
+
+        logger.LogInformation(
+            "[{Scenario}] Progress: Active={Active}/{Target}, Idle={Idle}, Ringing={Ringing}, InCall={InCall}, Wrapup={Wrapup}, Handled={Handled}",
+            Name,
+            context.Scheduler.ActiveCalls,
+            context.Scheduler.TargetConcurrent,
+            poolStats.Idle,
+            poolStats.Ringing,
+            poolStats.InCall,
+            poolStats.Wrapup,
+            poolStats.TotalCallsHandled);
+
+        // Transition to sustain phase when most agents have registered
+        if (context.Metrics.CurrentPhase == MetricsCollector.TestPhase.Ramp)
+        {
+            int totalAgents = context.AgentPool.TotalAgents;
+            int activeAgents = poolStats.Idle + poolStats.InCall + poolStats.Ringing + poolStats.Wrapup;
+            if (activeAgents >= totalAgents * 0.8 || DateTime.UtcNow > rampEndEstimate)
+                context.Metrics.EnterSustainPhase();
+        }
     }
 
     public async Task<ValidationReport> ValidateAsync(TestContext context, CancellationToken ct)
