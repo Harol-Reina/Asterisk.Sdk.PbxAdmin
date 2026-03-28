@@ -97,7 +97,7 @@ services:
       - "5061:5060/udp"   # SIP
       - "8280:8180"       # WS (WebRTC plain, dev)
       - "8190:8089"       # WSS (WebRTC TLS, prod)
-      - "21000-21050:21000-21050/udp"   # RTP media
+      - "22000-22050:22000-22050/udp"   # RTP media
     volumes:
       - ./entrypoint-asterisk.sh:/entrypoint-asterisk.sh:ro
       - ./asterisk-config-file/rtp.conf:/etc/asterisk/rtp.conf
