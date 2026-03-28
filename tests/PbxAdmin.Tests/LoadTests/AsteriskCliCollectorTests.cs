@@ -122,4 +122,42 @@ public sealed class AsteriskCliCollectorTests
     {
         AsteriskCliCollector.ParseEndpointCount("").Should().Be(0);
     }
+
+    // ── StripAnsi ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public void StripAnsi_ShouldRemoveColorCodes()
+    {
+        string input = "\u001b[1;31;40mUnavailable\u001b[0m";
+        AsteriskCliCollector.StripAnsi(input).Should().Be("Unavailable");
+    }
+
+    [Fact]
+    public void StripAnsi_ShouldPreservePlainText()
+    {
+        AsteriskCliCollector.StripAnsi("(Not in use)").Should().Be("(Not in use)");
+    }
+
+    [Fact]
+    public void ParseQueueShow_ShouldParseMembers_WithAnsiColorCodes()
+    {
+        // Real Asterisk output includes ANSI color codes around member states
+        string output = "loadtest has 5 calls (max unlimited) in 'rrmemory' strategy (12s holdtime, 30s talktime), W:0, C:100, A:3, SL:95.0%, SL2:90.0% within 20s\n"
+            + "   Members:\n"
+            + "      Load Agent 1 (PJSIP/2100) (ringinuse disabled)\u001b[0m\u001b[1;35;40m (realtime)\u001b[0m\u001b[0m (\u001b[1;32;40mNot in use\u001b[0m) has taken 6 calls\n"
+            + "      Load Agent 2 (PJSIP/2101) (ringinuse disabled)\u001b[0m\u001b[1;35;40m (realtime)\u001b[0m\u001b[0m (\u001b[1;33;40mIn use\u001b[0m) has taken 3 calls\n"
+            + "      Load Agent 3 (PJSIP/2102) (ringinuse disabled)\u001b[0m\u001b[1;35;40m (realtime)\u001b[0m\u001b[0m (\u001b[1;31;40mUnavailable\u001b[0m) has taken 0 calls\n";
+
+        // StripAnsi is applied in RunDockerExecAsync before parsing,
+        // so simulate that here
+        string cleaned = AsteriskCliCollector.StripAnsi(output);
+        var result = AsteriskCliCollector.ParseQueueShow(cleaned);
+
+        result.CallsWaiting.Should().Be(5);
+        result.Completed.Should().Be(100);
+        result.Abandoned.Should().Be(3);
+        result.MembersIdle.Should().Be(1);
+        result.MembersInUse.Should().Be(1);
+        result.MembersUnavailable.Should().Be(1);
+    }
 }

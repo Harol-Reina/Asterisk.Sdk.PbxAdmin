@@ -166,6 +166,10 @@ public sealed class AsteriskCliCollector
 
     // ── Private helpers ────────────────────────────────────────────────────
 
+    /// <summary>Strips ANSI escape sequences (colors, bold, etc.) from CLI output.</summary>
+    internal static string StripAnsi(string input) =>
+        Regex.Replace(input, @"\x1B\[[0-9;]*m", "");
+
     private static string ExtractLeadingInt(string line)
     {
         var match = Regex.Match(line, @"^(\d+)");
@@ -205,7 +209,7 @@ public sealed class AsteriskCliCollector
                 _logger.LogWarning("docker exec timed out: {Container} {Cmd}", container, asteriskCmd);
             }
 
-            return output;
+            return StripAnsi(output);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
