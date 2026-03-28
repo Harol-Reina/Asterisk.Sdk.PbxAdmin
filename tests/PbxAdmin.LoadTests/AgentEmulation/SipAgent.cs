@@ -3,6 +3,7 @@ using PbxAdmin.LoadTests.Configuration;
 using SIPSorcery.Media;
 using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
+using SIPSorceryMedia.Abstractions;
 
 namespace PbxAdmin.LoadTests.AgentEmulation;
 
@@ -381,7 +382,14 @@ public sealed class SipAgent : IAsyncDisposable
         try
         {
             var uas = _userAgent.AcceptCall(request);
-            _mediaSession = new VoIPMediaSession();
+            // Use AudioSourcesEnum.None to avoid the Music timer that reads from a
+            // ManifestResourceStream — disposing the session while that timer fires
+            // causes AccessViolationException (the timer runs on the ThreadPool and
+            // races with Dispose). None = no timer, no resource stream, no crash.
+            var audioSource = new AudioExtrasSource();
+            audioSource.SetSource(AudioSourcesEnum.None);
+            var mediaEndPoints = new MediaEndPoints { AudioSource = audioSource };
+            _mediaSession = new VoIPMediaSession(mediaEndPoints);
             bool answered = await _userAgent.Answer(uas, _mediaSession, publicIpAddress: null);
 
             if (answered)
