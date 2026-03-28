@@ -207,7 +207,7 @@ public sealed class AsteriskCliCollector
 
             return output;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }

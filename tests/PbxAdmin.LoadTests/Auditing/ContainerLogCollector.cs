@@ -102,7 +102,7 @@ public sealed class ContainerLogCollector
             string combined = stdout + "\n" + stderr;
             return FilterErrors(combined, containerName);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
