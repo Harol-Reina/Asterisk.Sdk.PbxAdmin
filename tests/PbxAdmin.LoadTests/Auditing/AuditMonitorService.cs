@@ -148,13 +148,13 @@ public sealed class AuditMonitorService : IAsyncDisposable
                 _snapshots.Add(snapshot);
                 await AppendJsonlAsync(snapshot);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Audit snapshot #{Seq} failed", _sequenceNumber);
+                _logger.LogWarning(ex, "Audit snapshot #{Seq} failed — continuing", _sequenceNumber);
             }
         }
     }
