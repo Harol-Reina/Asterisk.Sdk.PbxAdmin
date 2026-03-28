@@ -31,6 +31,7 @@ public sealed class SipAgent : IAsyncDisposable
     private CancellationTokenSource? _autoHangupCts;
     private CancellationTokenSource? _wrapupCts;
     private volatile bool _draining;
+    private int _cleaningUp; // 0 = idle, 1 = in progress (atomic guard)
     private AgentState _state = AgentState.Offline;
     private readonly Random _random = new();
 
@@ -323,14 +324,8 @@ public sealed class SipAgent : IAsyncDisposable
             _userAgent = null;
         }
 
-        if (_mediaSession is not null)
-        {
-            _mediaSession.Close(null);
-            _mediaSession.Dispose();
-            _mediaSession = null;
-        }
-
-        await Task.CompletedTask;
+        // Use CleanupCallAsync for thread-safe media session disposal
+        await CleanupCallAsync();
     }
 
     // -------------------------------------------------------------------------
@@ -488,16 +483,32 @@ public sealed class SipAgent : IAsyncDisposable
         await BeginWrapupAsync();
     }
 
-    private Task CleanupCallAsync()
+    private async Task CleanupCallAsync()
     {
-        if (_mediaSession is not null)
-        {
-            _mediaSession.Close(null);
-            _mediaSession.Dispose();
-            _mediaSession = null;
-        }
+        // Atomic guard: only one thread runs cleanup. HangupAsync() and OnCallHungup()
+        // race here — both call CleanupCallAsync() concurrently. Without this guard,
+        // one thread disposes VoIPMediaSession while its internal audio timer
+        // (AudioExtrasSource.SendMusicSample) is still reading from the resource stream,
+        // causing AccessViolationException.
+        if (Interlocked.CompareExchange(ref _cleaningUp, 1, 0) != 0)
+            return;
 
-        return Task.CompletedTask;
+        try
+        {
+            if (_mediaSession is not null)
+            {
+                _mediaSession.Close(null);
+                // Let SIPSorcery's internal audio timers drain before disposing.
+                // The timer fires every 20ms; 100ms gives ~5 cycles to complete.
+                await Task.Delay(100);
+                _mediaSession.Dispose();
+                _mediaSession = null;
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _cleaningUp, 0);
+        }
     }
 
     // -------------------------------------------------------------------------
