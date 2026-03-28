@@ -62,6 +62,7 @@ services:
       - ./asterisk-config-realtime/res_odbc.conf:/etc/asterisk/res_odbc.conf:ro
       - ./asterisk-config-realtime/res_parking.conf:/etc/asterisk/res_parking.conf:ro
       - ./asterisk-config-realtime/sorcery.conf:/etc/asterisk/sorcery.conf:ro
+      - ./asterisk-config-realtime/res_sorcery_memory_cache.conf:/etc/asterisk/res_sorcery_memory_cache.conf:ro
       - ./asterisk-config-realtime/users.conf:/etc/asterisk/users.conf
       - ./asterisk-config-realtime/odbcinst.ini:/etc/odbcinst.ini:ro
       - ./asterisk-config-realtime/odbc.ini:/etc/odbc.ini:ro
