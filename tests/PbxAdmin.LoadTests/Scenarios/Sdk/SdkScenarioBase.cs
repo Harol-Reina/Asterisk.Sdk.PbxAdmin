@@ -249,6 +249,19 @@ public abstract class SdkScenarioBase : ITestScenario
         return (false, elapsed);
     }
 
+    // ── AuditIntervalForLevel ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the recommended audit snapshot interval in seconds for the given
+    /// pyramid level. Scale and endurance tiers use a shorter interval (5 s) to
+    /// capture transient resource spikes; all other tiers use 10 s.
+    /// </summary>
+    internal static int AuditIntervalForLevel(string level) => level switch
+    {
+        "scale" or "endurance" => 5,
+        _ => 10,
+    };
+
     // ── ParseFirstInteger ────────────────────────────────────────────────────
 
     /// <summary>

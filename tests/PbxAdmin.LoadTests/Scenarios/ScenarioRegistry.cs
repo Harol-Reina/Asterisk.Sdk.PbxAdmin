@@ -40,10 +40,14 @@ public static class ScenarioRegistry
             ["rapid-reregister"] = new RapidReregisterScenario(),
             // SDK validation scenarios
             ["sdk-smoke"] = new SdkSmokeScenario(),
-            ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
-            ["sdk-live-drift"] = new SdkLiveDriftScenario(),
-            ["sdk-reconnect"] = new Sdk.SdkReconnectScenario(),
-            ["sdk-endurance"] = new Sdk.SdkEnduranceScenario(),
+            ["sdk-state-sync"] = new SdkStateSyncScenario(),
+            ["sdk-sessions"] = new SdkSessionsScenario(),
+            ["sdk-reconnect"] = new SdkReconnectScenario(),
+            ["sdk-scale-channels"] = new SdkScaleChannelsScenario(),
+            ["sdk-scale-queues"] = new SdkScaleQueuesScenario(),
+            ["sdk-scale-agents"] = new SdkScaleAgentsScenario(),
+            ["sdk-scale-sessions"] = new SdkScaleSessionsScenario(),
+            ["sdk-endurance"] = new SdkEnduranceScenario(),
             // Aliases
             ["smoke"] = new SdkSmokeScenario(),
             ["load"] = new SustainedLoadScenario(),
