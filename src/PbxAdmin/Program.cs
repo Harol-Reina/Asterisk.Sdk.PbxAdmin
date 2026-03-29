@@ -213,6 +213,35 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 
+app.MapPost("/account/login", async (HttpContext context, IConfiguration config) =>
+{
+    var form = await context.Request.ReadFormAsync();
+    var username = form["Username"].ToString();
+    var password = form["Password"].ToString();
+    var returnUrl = form["ReturnUrl"].ToString();
+
+    var expectedUser = config["Auth:Username"] ?? "admin";
+    var expectedPass = config["Auth:Password"] ?? "admin";
+
+    if (username != expectedUser || password != expectedPass)
+        return Results.Redirect($"/login?error=1&returnUrl={Uri.EscapeDataString(returnUrl)}");
+
+    var claims = new List<System.Security.Claims.Claim>
+    {
+        new(System.Security.Claims.ClaimTypes.Name, username)
+    };
+    var identity = new System.Security.Claims.ClaimsIdentity(
+        claims, CookieAuthenticationDefaults.AuthenticationScheme);
+    var principal = new System.Security.Claims.ClaimsPrincipal(identity);
+
+    await context.SignInAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme,
+        principal,
+        new AuthenticationProperties { IsPersistent = true });
+
+    return Results.Redirect(string.IsNullOrEmpty(returnUrl) ? "/" : returnUrl);
+}).AllowAnonymous();
+
 app.MapPost("/logout", async (HttpContext context) =>
 {
     await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
