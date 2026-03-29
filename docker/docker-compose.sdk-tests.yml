@@ -1,0 +1,168 @@
+# SDK test pyramid compose file.
+# Runs the minimal infrastructure needed to validate the Asterisk.Sdk NuGet library:
+# postgres, asterisk-realtime, pstn-emulator, and pbx-admin (optional — included for
+# convenience but not required for SDK-level tests that target Asterisk directly).
+# The asterisk-file server is intentionally omitted.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    command: ["postgres", "-c", "max_connections=200"]
+    container_name: demo-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: asterisk
+      POSTGRES_USER: asterisk
+      POSTGRES_PASSWORD: asterisk
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asterisk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  asterisk-realtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.asterisk-realtime
+    container_name: demo-pbx-realtime
+    entrypoint: ["/entrypoint-asterisk.sh"]
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    environment:
+      - EXTERNAL_IP=${EXTERNAL_IP:-}
+    ports:
+      - "5038:5038"       # AMI
+      - "8088:8088"       # ARI HTTP
+      - "5060:5060/udp"   # SIP
+      - "8180:8180"       # WS (WebRTC plain, dev)
+      - "8089:8089"       # WSS (WebRTC TLS, prod)
+      - "20000-21999:20000-21999/udp"   # RTP media
+    volumes:
+      - ./entrypoint-asterisk.sh:/entrypoint-asterisk.sh:ro
+      - ./asterisk-config-realtime/rtp.conf:/etc/asterisk/rtp.conf
+      - ./asterisk-config-realtime/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./asterisk-config-realtime/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      - ./asterisk-config-realtime/cdr.conf:/etc/asterisk/cdr.conf:ro
+      - ./asterisk-config-realtime/cdr_adaptive_odbc.conf:/etc/asterisk/cdr_adaptive_odbc.conf:ro
+      - ./asterisk-config-realtime/cel.conf:/etc/asterisk/cel.conf:ro
+      - ./asterisk-config-realtime/cel_odbc.conf:/etc/asterisk/cel_odbc.conf:ro
+      - ./asterisk-config-realtime/confbridge.conf:/etc/asterisk/confbridge.conf
+      - ./asterisk-config-realtime/extconfig.conf:/etc/asterisk/extconfig.conf:ro
+      - ./asterisk-config-realtime/extensions.conf:/etc/asterisk/extensions.conf
+      - ./asterisk-config-realtime/features.conf:/etc/asterisk/features.conf:ro
+      - ./asterisk-config-realtime/geolocation.conf:/etc/asterisk/geolocation.conf:ro
+      - ./asterisk-config-realtime/http.conf:/etc/asterisk/http.conf
+      - ./asterisk-config-realtime/logger.conf:/etc/asterisk/logger.conf:ro
+      - ./asterisk-config-realtime/manager.conf:/etc/asterisk/manager.conf
+      - ./asterisk-config-realtime/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./asterisk-config-realtime/musiconhold.conf:/etc/asterisk/musiconhold.conf
+      - ./asterisk-config-realtime/pjproject.conf:/etc/asterisk/pjproject.conf
+      - ./asterisk-config-realtime/pjsip.conf:/etc/asterisk/pjsip.conf
+      - ./asterisk-config-realtime/queues.conf:/etc/asterisk/queues.conf
+      - ./asterisk-config-realtime/res_odbc.conf:/etc/asterisk/res_odbc.conf:ro
+      - ./asterisk-config-realtime/res_parking.conf:/etc/asterisk/res_parking.conf:ro
+      - ./asterisk-config-realtime/sorcery.conf:/etc/asterisk/sorcery.conf:ro
+      - ./asterisk-config-realtime/users.conf:/etc/asterisk/users.conf
+      - ./asterisk-config-realtime/odbcinst.ini:/etc/odbcinst.ini:ro
+      - ./asterisk-config-realtime/odbc.ini:/etc/odbc.ini:ro
+      - ./certs/asterisk.pem:/etc/asterisk/keys/asterisk.pem:ro
+      - ./certs/asterisk.key:/etc/asterisk/keys/asterisk.key:ro
+      - ./moh:/var/lib/asterisk/moh:ro
+      - ./sounds/es-custom:/var/lib/asterisk/sounds/es-custom:ro
+      - recordings-realtime:/var/spool/asterisk/monitor
+      - ./sample-recordings:/var/spool/asterisk/monitor/samples
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show version"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pstn-emulator:
+    image: docker-asterisk-file:latest
+    container_name: demo-pstn
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    ports:
+      - "5040:5038"
+    depends_on:
+      asterisk-realtime:
+        condition: service_healthy
+    volumes:
+      - ../docker/functional/pstn-emulator-config/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ../docker/functional/pstn-emulator-config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ../docker/functional/pstn-emulator-config/voicemail.conf:/etc/asterisk/voicemail.conf:ro
+      - ../docker/functional/pstn-emulator-config/modules.conf:/etc/asterisk/modules.conf:ro
+      - ../docker/functional/pstn-emulator-config/manager.conf:/etc/asterisk/manager.conf:ro
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show version"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pbx-admin:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.pbxadmin
+    container_name: asterisk-pbx-admin
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    depends_on:
+      asterisk-realtime:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      # TLS certificate for HTTPS (WebRTC requires secure context)
+      - ./certs/pbxadmin.pem:/app/certs/pbxadmin.pem:ro
+      - ./certs/pbxadmin.key:/app/certs/pbxadmin.key:ro
+      # Shared MOH files (read-only, same for both servers)
+      - ./moh:/data/moh:ro
+      # Recordings — mounted at the fallback path that the Recordings page uses
+      # The code falls back to /var/spool/asterisk/monitor when config lookup by serverId fails
+      - ./sample-recordings:/var/spool/asterisk/monitor
+      # Also mount at /data/ path for the env var config
+      - ./sample-recordings:/data/recordings-realtime
+      # MOH at the fallback path too
+      - ./moh:/var/lib/asterisk/moh:ro
+      # Seed route data for file-mode server (JSON-based route repository)
+      - ./seed-routes:/app/data/routes
+    environment:
+      - DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE=false
+      - Logging__LogLevel__Default=Debug
+      # Kestrel HTTPS certificate
+      - Kestrel__Certificates__Default__Path=/app/certs/pbxadmin.pem
+      - Kestrel__Certificates__Default__KeyPath=/app/certs/pbxadmin.key
+      - Auth__Username=admin
+      - Auth__Password=admin
+      # Realtime PBX (extensions 2XXX/3XXX, queues sales/support)
+      - Asterisk__Servers__0__Id=pbx-realtime
+      - Asterisk__Servers__0__Hostname=asterisk-realtime
+      - Asterisk__Servers__0__Port=5038
+      - Asterisk__Servers__0__Username=dashboard
+      - Asterisk__Servers__0__Password=dashboard
+      - Asterisk__Servers__0__ConfigMode=Realtime
+      - Asterisk__Servers__0__RealtimeConnectionString=Host=postgres;Database=asterisk;Username=asterisk;Password=asterisk
+      - Asterisk__Servers__0__RecordingsPath=/data/recordings-realtime
+      - Asterisk__Servers__0__MohBasePath=/data/moh
+      - Asterisk__Servers__0__MaxUploadSizeMb=20
+      - Asterisk__Servers__0__MaxMohClassSizeMb=200
+      - Asterisk__Servers__0__ExtensionRange__Start=2000
+      - Asterisk__Servers__0__ExtensionRange__End=3999
+      - Asterisk__Servers__0__WssPort=8089
+      - Softphone__UseTls=true
+
+volumes:
+  pgdata:
+  recordings-realtime:
