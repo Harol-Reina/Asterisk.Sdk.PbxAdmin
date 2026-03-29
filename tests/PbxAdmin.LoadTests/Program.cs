@@ -19,10 +19,14 @@ using MsLogger = Microsoft.Extensions.Logging.ILogger;
 
 // ─── CLI definition ──────────────────────────────────────────────────────────
 
-var scenarioOption = new Option<string>("--scenario")
+var scenarioOption = new Option<string?>("--scenario")
 {
-    Description = "Scenario name: smoke, load, soak",
-    Required = true
+    Description = "Scenario name: smoke, load, soak"
+};
+
+var levelOption = new Option<string?>("--level")
+{
+    Description = "Pyramid level: smoke, functional, scale, all"
 };
 
 var agentsOption = new Option<int>("--agents")
@@ -67,6 +71,7 @@ var auditIntervalOption = new Option<int>("--audit-interval")
 var rootCommand = new RootCommand("PbxAdmin SDK Test Platform — Asterisk load and validation harness")
 {
     scenarioOption,
+    levelOption,
     agentsOption,
     targetOption,
     durationOption,
@@ -78,7 +83,8 @@ var rootCommand = new RootCommand("PbxAdmin SDK Test Platform — Asterisk load 
 
 rootCommand.SetAction(async (parseResult, ct) =>
 {
-    string scenario = parseResult.GetValue(scenarioOption)!;
+    string? scenario = parseResult.GetValue(scenarioOption);
+    string? level = parseResult.GetValue(levelOption);
     int agents = parseResult.GetValue(agentsOption);
     string target = parseResult.GetValue(targetOption)!;
     int duration = parseResult.GetValue(durationOption);
@@ -87,7 +93,19 @@ rootCommand.SetAction(async (parseResult, ct) =>
     int? maxConcurrent = parseResult.GetValue(maxConcurrentOption);
     int auditInterval = parseResult.GetValue(auditIntervalOption);
 
-    Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, talkTime, maxConcurrent, auditInterval, ct);
+    if (!string.IsNullOrWhiteSpace(level))
+    {
+        Environment.ExitCode = await RunLevelAsync(level, agents, target, duration, output, talkTime, maxConcurrent, auditInterval, ct);
+    }
+    else if (!string.IsNullOrWhiteSpace(scenario))
+    {
+        Environment.ExitCode = await RunAsync(scenario, agents, target, duration, output, talkTime, maxConcurrent, auditInterval, ct);
+    }
+    else
+    {
+        Console.Error.WriteLine("Error: either --scenario or --level must be specified.");
+        Environment.ExitCode = 1;
+    }
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
@@ -279,6 +297,209 @@ static async Task<int> RunAsync(
         }
 
         // Stop audit monitor — writes consolidated .audit.json
+        if (auditor is not null)
+            try { await auditor.DisposeAsync(); } catch { /* best-effort */ }
+
+        if (context.DockerStats is not null)
+            try { await context.DockerStats.DisposeAsync(); } catch { /* best-effort */ }
+        if (context.SdkRuntime is not null)
+            try { await SdkHostSetup.StopAsync(context.SdkRuntime); } catch { /* best-effort */ }
+        try { await context.AgentPool.DisposeAsync(); } catch { /* best-effort */ }
+        if (context.AgentProvisioning is not null)
+            try { await context.AgentProvisioning.DisposeAsync(); } catch { /* best-effort */ }
+        try { await context.CallGenerator.DisposeAsync(); } catch { /* best-effort */ }
+        await Log.CloseAndFlushAsync();
+    }
+
+    return exitCode;
+}
+
+// ─── Level runner ─────────────────────────────────────────────────────────────
+
+static async Task<int> RunLevelAsync(
+    string level,
+    int agents,
+    string target,
+    int durationMinutes,
+    string? outputPath,
+    int? talkTime,
+    int? maxConcurrent,
+    int auditIntervalSecs,
+    CancellationToken ct)
+{
+    Log.Logger = new LoggerConfiguration()
+        .MinimumLevel.Information()
+        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        .CreateLogger();
+
+    var host = BuildHost();
+    var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger("Program");
+
+    var scenarioNames = LevelRunner.GetScenarios(level);
+    if (scenarioNames.Length == 0)
+    {
+        logger.LogError("Unknown level '{Level}'. Available: {Levels}",
+            level, string.Join(", ", LevelRunner.Levels.Keys));
+        return 1;
+    }
+
+    logger.LogInformation("Running pyramid level '{Level}' — {Count} scenario(s): {Names}",
+        level, scenarioNames.Length, string.Join(", ", scenarioNames));
+
+    PrintBanner($"level:{level}", agents, target, durationMinutes, outputPath);
+
+    // CLI --duration overrides appsettings.json TestDurationMinutes
+    var callPatternOpts = host.Services.GetRequiredService<IOptions<CallPatternOptions>>().Value;
+    callPatternOpts.TestDurationMinutes = durationMinutes;
+
+    var agentBehaviorOpts = host.Services.GetRequiredService<IOptions<AgentBehaviorOptions>>().Value;
+
+    // Auto-adjust duration for progressive agent onboarding
+    int minDuration = AgentPoolService.CalculateMinDurationMinutes(agents, agentBehaviorOpts.WaveSize);
+    if (callPatternOpts.TestDurationMinutes < minDuration)
+    {
+        logger.LogWarning(
+            "{Agents} agents need at least {Min} min. Adjusting duration from {Current} to {MinDuration}",
+            agents, minDuration, callPatternOpts.TestDurationMinutes, minDuration);
+        callPatternOpts.TestDurationMinutes = minDuration;
+    }
+
+    // Cap max concurrent to 80% of agents (PSTN emulator ceiling)
+    int maxConcurrentCap = (int)Math.Ceiling(agents * 0.8);
+    if (callPatternOpts.MaxConcurrentCalls > maxConcurrentCap)
+    {
+        logger.LogInformation("Auto-tune: MaxConcurrentCalls {Old} → {New} (80% of {Agents} agents)",
+            callPatternOpts.MaxConcurrentCalls, maxConcurrentCap, agents);
+        callPatternOpts.MaxConcurrentCalls = maxConcurrentCap;
+    }
+
+    // CLI overrides (take precedence over auto-tune and appsettings)
+    if (maxConcurrent.HasValue)
+    {
+        callPatternOpts.MaxConcurrentCalls = maxConcurrent.Value;
+        logger.LogInformation("CLI override: MaxConcurrentCalls = {Value}", maxConcurrent.Value);
+    }
+
+    if (talkTime.HasValue)
+    {
+        agentBehaviorOpts.TalkTimeSecs = talkTime.Value;
+        logger.LogInformation("CLI override: TalkTimeSecs = {Value}s", talkTime.Value);
+    }
+
+    int cycleSecs = agentBehaviorOpts.TalkTimeSecs + agentBehaviorOpts.RingDelaySecs + agentBehaviorOpts.WrapupTimeSecs;
+    callPatternOpts.DefaultCallDurationSecs = cycleSecs;
+    callPatternOpts.MinCallDurationSecs = cycleSecs;
+    callPatternOpts.MaxCallDurationSecs = cycleSecs;
+    logger.LogInformation("Auto-tune: scheduler slot = {Cycle}s (talk={Talk}s + ring={Ring}s + wrapup={Wrap}s)",
+        cycleSecs, agentBehaviorOpts.TalkTimeSecs, agentBehaviorOpts.RingDelaySecs, agentBehaviorOpts.WrapupTimeSecs);
+
+    var context = BuildTestContext(host, loggerFactory);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+    // Infrastructure auditor — runs alongside all scenarios in this level
+    AuditMonitorService? auditor = null;
+    if (auditIntervalSecs > 0 && !string.IsNullOrWhiteSpace(outputPath))
+    {
+        auditor = new AuditMonitorService(loggerFactory);
+        await auditor.StartAsync(auditIntervalSecs, outputPath, cts.Token);
+    }
+
+    int drainSecs = agentBehaviorOpts.TalkTimeSecs + agentBehaviorOpts.WrapupMaxSecs + 10;
+    int marginMinutes = (drainSecs / 60) + 2;
+    int testDurationMinutes = callPatternOpts.TestDurationMinutes;
+    // Level total: all scenarios sequentially plus margin
+    int totalMinutes = (testDurationMinutes * scenarioNames.Length) + marginMinutes;
+    cts.CancelAfter(TimeSpan.FromMinutes(totalMinutes));
+    logger.LogInformation("Level timeout: {Count} scenario(s) × {Duration} min + {Margin} min margin = {Total} min",
+        scenarioNames.Length, testDurationMinutes, marginMinutes, totalMinutes);
+
+    int exitCode = 1;
+    try
+    {
+        context.Scheduler.AttachMetrics(context.Metrics);
+
+        // Start SDK and agents ONCE — reused across all scenarios in this level
+        await StartSdkAsync(context, host.Services, logger, cts.Token);
+        await ProvisionAgentsAsync(context, agents, target, logger, cts.Token);
+        await StartAgentsAsync(context, agents, logger, cts.Token);
+
+        if (context.SdkRuntime is not null)
+        {
+            try
+            {
+                await context.SdkRuntime.Server.RequestInitialStateAsync(cts.Token);
+                logger.LogInformation("SDK live state refreshed with {Agents} registered agents", agents);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "SDK state refresh failed — metrics may be incomplete");
+            }
+        }
+
+        await ConnectPstnEmulatorAsync(context, logger, cts.Token);
+        StartDockerStats(context, loggerFactory);
+
+        exitCode = 0;
+
+        // Run each scenario in the level; stop on first failure (gating)
+        for (int i = 0; i < scenarioNames.Length; i++)
+        {
+            string scenarioName = scenarioNames[i];
+            var testScenario = ScenarioRegistry.Get(scenarioName);
+            if (testScenario is null)
+            {
+                logger.LogError("Level '{Level}': unknown scenario '{Scenario}' at position {Index}. Aborting.",
+                    level, scenarioName, i);
+                exitCode = 1;
+                break;
+            }
+
+            logger.LogInformation("[{Index}/{Total}] Executing scenario: {Name} — {Description}",
+                i + 1, scenarioNames.Length, testScenario.Name, testScenario.Description);
+
+            await testScenario.ExecuteAsync(context, cts.Token);
+
+            logger.LogInformation("[{Index}/{Total}] Validating results for: {Name}", i + 1, scenarioNames.Length, testScenario.Name);
+            var report = await testScenario.ValidateAsync(context, cts.Token);
+
+            var elapsed = context.TestEndTime - context.TestStartTime;
+            var metrics = context.Metrics.GetSummary(elapsed);
+            var dockerStats = context.DockerStats?.GetSummary();
+            ReportGenerator.WriteConsoleReport(report, metrics, dockerStats);
+
+            if (!string.IsNullOrWhiteSpace(outputPath))
+            {
+                string scenarioOutputPath = outputPath.Replace(".json", $"-{scenarioName}.json");
+                ReportGenerator.WriteJsonReport(report, metrics, dockerStats, scenarioOutputPath);
+                logger.LogInformation("JSON report written to {Path}", scenarioOutputPath);
+            }
+
+            if (report.FailedChecks > 0)
+            {
+                logger.LogError("Scenario '{Name}' FAILED ({Failed} checks). Stopping level run (gating).",
+                    testScenario.Name, report.FailedChecks);
+                exitCode = 1;
+                break;
+            }
+
+            logger.LogInformation("Scenario '{Name}' PASSED.", testScenario.Name);
+        }
+
+        if (exitCode == 0)
+            logger.LogInformation("Level '{Level}' completed — all {Count} scenario(s) PASSED.", level, scenarioNames.Length);
+    }
+    catch (OperationCanceledException ex)
+    {
+        logger.LogError(ex, "Level '{Level}' timed out.", level);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unhandled exception during level '{Level}'.", level);
+    }
+    finally
+    {
         if (auditor is not null)
             try { await auditor.DisposeAsync(); } catch { /* best-effort */ }
 
