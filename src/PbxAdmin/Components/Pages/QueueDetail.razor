@@ -10,6 +10,7 @@
 @inject IConfigOperationState ConfigOp
 @inject NavigationManager Nav
 @inject IQueueConfigService QueueCfgSvc
+@inject IConfigProviderResolver ProviderResolver
 @inject IStringLocalizer<SharedStrings> L
 @inject IToastService Toast
 @implements IDisposable
@@ -21,7 +22,10 @@
         <a href="/queues" class="back-link">Queues</a> / @QueueName
         <span class="badge badge-muted">@ServerId</span>
     </h2>
-    <button class="btn btn-sm btn-red" @onclick="ConfirmDelete" disabled="@_deleteInProgress">@L["QDetail_DeleteQueue"]</button>
+    <div>
+        <button class="btn btn-sm btn-muted" @onclick="RefreshStateAsync" disabled="@_refreshing">@L["DP_Refresh"]</button>
+        <button class="btn btn-sm btn-red" @onclick="ConfirmDelete" disabled="@_deleteInProgress">@L["QDetail_DeleteQueue"]</button>
+    </div>
 </div>
 
 <ConfirmDialog @ref="_deleteDialog"
@@ -187,7 +191,10 @@ else
     [Parameter] public string ServerId { get; set; } = "";
     [Parameter] public string QueueName { get; set; } = "";
 
+    private const int AutoRefreshEveryNTicks = 10; // 10 × 1s = 10s
     private Timer? _timer;
+    private int _tickCount;
+    private bool _refreshing;
     private AsteriskQueue? _queue;
     private QueueConfigDto? _queueConfig;
     private string _addInterface = "";
@@ -202,14 +209,57 @@ else
         var queues = await QueueCfgSvc.GetQueuesAsync(ServerId);
         _queueConfig = queues.FirstOrDefault(q =>
             string.Equals(q.Name, QueueName, StringComparison.OrdinalIgnoreCase));
-        _timer = new Timer(_ => { RefreshQueue(); InvokeAsync(StateHasChanged); },
-            null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        _timer = new Timer(async _ =>
+        {
+            _tickCount++;
+            if (_tickCount >= AutoRefreshEveryNTicks)
+            {
+                _tickCount = 0;
+                await RefreshStateInternalAsync();
+            }
+            RefreshQueue();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     private void RefreshQueue()
     {
         var entry = Monitor.GetServer(ServerId);
         _queue = entry?.Server.Queues.GetByName(QueueName);
+    }
+
+    private async Task RefreshStateAsync()
+    {
+        _refreshing = true;
+        try
+        {
+            // Manual refresh: reload module (clears stale members) + clear SDK state + re-query
+            var entry = Monitor.GetServer(ServerId);
+            if (entry is not null)
+            {
+                var provider = ProviderResolver.GetProvider(ServerId);
+                await provider.ReloadModuleAsync(ServerId, "app_queue.so");
+                ClearQueueState(entry.Server);
+                await entry.Server.RequestInitialStateAsync();
+            }
+            RefreshQueue();
+            Toast.Show("Queue state refreshed", ToastLevel.Success);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private async Task RefreshStateInternalAsync()
+    {
+        // Auto-poll: clear stale state then re-query (no module reload — safe during active calls)
+        var entry = Monitor.GetServer(ServerId);
+        if (entry is not null)
+        {
+            ClearQueueState(entry.Server);
+            await entry.Server.RequestInitialStateAsync();
+        }
     }
 
     private async Task TogglePause(AsteriskQueueMember member, bool pause)
@@ -333,6 +383,15 @@ else
             QueueMemberState.DeviceUnavailable => ("status-offline", "Offline", "\u2715"),
             _ => ("status-unknown", "Unknown", "?")
         };
+    }
+
+    private static void ClearQueueState(Asterisk.Sdk.Live.Server.AsteriskServer server)
+    {
+        foreach (var queue in server.Queues.Queues)
+        {
+            queue.Members.Clear();
+            queue.Entries.Clear();
+        }
     }
 
     private static string FormatSeconds(int seconds)

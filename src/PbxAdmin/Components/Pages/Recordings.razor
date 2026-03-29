@@ -6,12 +6,16 @@
 @inject NavigationManager Nav
 @inject IConfiguration Config
 @inject IStringLocalizer<SharedStrings> L
+@implements IDisposable
 
 <PageTitle>@L["Rec_Title"]</PageTitle>
 
 <div class="page-header-row">
     <h2>@L["Rec_Heading"]</h2>
-    <button class="btn btn-primary" @onclick="NewPolicy">@L["Rec_NewPolicy"]</button>
+    <div>
+        <button class="btn btn-sm btn-muted" @onclick="RefreshAsync" disabled="@_refreshing">@L["DP_Refresh"]</button>
+        <button class="btn btn-primary" @onclick="NewPolicy">@L["Rec_NewPolicy"]</button>
+    </div>
 </div>
 
 <div class="chip-bar">
@@ -143,15 +147,26 @@ else if (_activeTab == "active")
 
 @code {
     private string _activeTab = "policies";
+    private Timer? _activeTimer;
     private List<RecordingPolicy> _policies = [];
     private List<AudioFileInfo> _files = [];
     private List<RetentionWarning> _retentionWarnings = [];
     private bool _loading = true;
+    private bool _refreshing;
     private bool _fileAccessAvailable;
     private string? _playingFile;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+        _loading = false;
+        // Auto-refresh active recordings every 2 seconds
+        _activeTimer = new Timer(_ => InvokeAsync(StateHasChanged),
+            null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task LoadDataAsync()
     {
         var serverId = ServerSvc.SelectedServerId;
         if (serverId is not null)
@@ -168,7 +183,20 @@ else if (_activeTab == "active")
                 _retentionWarnings = await RecSvc.GetRetentionWarningsAsync(serverId);
             }
         }
-        _loading = false;
+    }
+
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+        _error = null;
+        try
+        {
+            await LoadDataAsync();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
     private void NewPolicy() => Nav.NavigateTo("/recordings/edit/new");
@@ -196,4 +224,6 @@ else if (_activeTab == "active")
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         return $"{bytes / (1024.0 * 1024.0):F1} MB";
     }
+
+    public void Dispose() => _activeTimer?.Dispose();
 }

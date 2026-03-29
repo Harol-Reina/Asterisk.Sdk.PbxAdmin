@@ -4,16 +4,21 @@
 @inject IStringLocalizer<SharedStrings> L
 @inject ISelectedServerService ServerSvc
 @inject IQueueConfigService QueueCfgSvc
+@inject IConfigProviderResolver ProviderResolver
+@inject IToastService Toast
 @implements IDisposable
 
 <PageTitle>@L["Queues_Title"]</PageTitle>
 
 <div class="page-header-row">
     <h2>@L["Queues_Heading"]</h2>
-    @foreach (var (serverId, _) in ServerSvc.GetServers())
-    {
-        <a href="/queue-config/@serverId/new" class="btn btn-blue btn-sm">@L["Queues_NewQueue"]</a>
-    }
+    <div>
+        <button class="btn btn-sm btn-muted" @onclick="RefreshStateAsync" disabled="@_refreshing">@L["DP_Refresh"]</button>
+        @foreach (var (serverId, _) in ServerSvc.GetServers())
+        {
+            <a href="/queue-config/@serverId/new" class="btn btn-blue btn-sm">@L["Queues_NewQueue"]</a>
+        }
+    </div>
 </div>
 
 <HelpPanel SectionKey="Queues_Overview">@L["Queues_Heading"]</HelpPanel>
@@ -78,7 +83,10 @@
 </div>
 
 @code {
+    private const int AutoRefreshEveryNTicks = 5; // 5 × 2s = 10s
     private Timer? _timer;
+    private int _tickCount;
+    private bool _refreshing;
     private Dictionary<string, int> _configuredQueues = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
@@ -86,9 +94,55 @@
         await LoadConfiguredQueuesAsync();
         _timer = new Timer(async _ =>
         {
+            _tickCount++;
+            if (_tickCount >= AutoRefreshEveryNTicks)
+            {
+                _tickCount = 0;
+                await RefreshStateInternalAsync();
+            }
             await LoadConfiguredQueuesAsync();
             await InvokeAsync(StateHasChanged);
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task RefreshStateAsync()
+    {
+        _refreshing = true;
+        try
+        {
+            // Manual refresh: reload module (clears stale members) + clear SDK state + re-query
+            foreach (var (serverId, entry) in ServerSvc.GetServers())
+            {
+                var provider = ProviderResolver.GetProvider(serverId);
+                await provider.ReloadModuleAsync(serverId, "app_queue.so");
+                ClearQueueState(entry.Server);
+                await entry.Server.RequestInitialStateAsync();
+            }
+            Toast.Show("Queue state refreshed", ToastLevel.Success);
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private async Task RefreshStateInternalAsync()
+    {
+        // Auto-poll: clear stale state then re-query (no module reload — safe during active calls)
+        foreach (var (serverId, entry) in ServerSvc.GetServers())
+        {
+            ClearQueueState(entry.Server);
+            await entry.Server.RequestInitialStateAsync();
+        }
+    }
+
+    private static void ClearQueueState(Asterisk.Sdk.Live.Server.AsteriskServer server)
+    {
+        foreach (var queue in server.Queues.Queues)
+        {
+            queue.Members.Clear();
+            queue.Entries.Clear();
+        }
     }
 
     private async Task LoadConfiguredQueuesAsync()

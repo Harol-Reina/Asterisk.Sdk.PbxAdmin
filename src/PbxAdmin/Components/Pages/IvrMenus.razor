@@ -12,7 +12,10 @@
 
 <div class="page-header-row">
     <h2>@L["Ivr_Heading"]</h2>
-    <button class="btn btn-primary" @onclick="NewMenu">@L["Ivr_NewIvr"]</button>
+    <div>
+        <button class="btn btn-sm btn-muted" @onclick="RefreshAsync" disabled="@_refreshing">@L["DP_Refresh"]</button>
+        <button class="btn btn-primary" @onclick="NewMenu">@L["Ivr_NewIvr"]</button>
+    </div>
 </div>
 
 <HelpPanel SectionKey="IvrMenus_Overview">@L["Ivr_Heading"]</HelpPanel>
@@ -94,9 +97,16 @@ else
     private List<IvrMenuViewModel> _menus = [];
     private CallFlowGraph? _graph;
     private bool _loading = true;
+    private bool _refreshing;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async Task LoadDataAsync()
     {
         var serverId = ServerSvc.SelectedServerId;
         if (serverId is not null)
@@ -104,7 +114,20 @@ else
             _menus = await IvrSvc.GetRootMenusAsync(serverId);
             _graph = await FlowSvc.BuildFlowAsync(serverId);
         }
-        _loading = false;
+    }
+
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+        _error = null;
+        try
+        {
+            await LoadDataAsync();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
     private void NewMenu() => Nav.NavigateTo("/ivr-menus/edit/new");

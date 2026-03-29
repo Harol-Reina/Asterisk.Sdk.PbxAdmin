@@ -3,6 +3,7 @@
 @using Asterisk.Sdk.Ami.Actions
 @using Asterisk.Sdk.Sessions
 @inject ICallSessionManager Sessions
+@inject AsteriskMonitorService Monitor
 @inject ISelectedServerService ServerSvc
 @inject NavigationManager Nav
 @inject IStringLocalizer<SharedStrings> L
@@ -492,6 +493,29 @@ else
     private IEnumerable<CallSession> FilterByServer(IEnumerable<CallSession> sessions) =>
         sessions.Where(s => s.ServerId == ServerSvc.SelectedServerId);
 
+    /// <summary>
+    /// Filter out orphaned sessions whose channels no longer exist in Asterisk.
+    /// The SDK doesn't auto-reconcile Connected sessions when Hangup events are missed.
+    /// </summary>
+    private IEnumerable<CallSession> FilterAlive(IEnumerable<CallSession> sessions)
+    {
+        var serverId = ServerSvc.SelectedServerId;
+        if (serverId is null) return sessions;
+        var entry = Monitor.GetServer(serverId);
+        if (entry is null) return sessions;
+
+        var activeChannelNames = new HashSet<string>(
+            entry.Server.Channels.ActiveChannels.Select(c => c.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        if (activeChannelNames.Count == 0)
+            return sessions.Where(s => IsTerminal(s.State));
+
+        return sessions.Where(s =>
+            IsTerminal(s.State)
+            || s.Participants.Any(p => p.LeftAt is null && activeChannelNames.Contains(p.Channel)));
+    }
+
     private void RefreshCalls()
     {
         var now = DateTimeOffset.UtcNow;
@@ -514,7 +538,7 @@ else
 
         _searchResults = [];
 
-        var active = FilterByServer(Sessions.ActiveSessions)
+        var active = FilterAlive(FilterByServer(Sessions.ActiveSessions))
             .OrderByDescending(s => s.CreatedAt)
             .ToList();
 
@@ -538,10 +562,10 @@ else
         s is CallSessionState.Completed or CallSessionState.Failed or CallSessionState.TimedOut;
 
     private int CountByState(CallSessionState state) =>
-        FilterByServer(Sessions.ActiveSessions).Count(s => s.State == state);
+        FilterAlive(FilterByServer(Sessions.ActiveSessions)).Count(s => s.State == state);
 
     private int CountConnected() =>
-        FilterByServer(Sessions.ActiveSessions).Count(s => IsConnected(s.State));
+        FilterAlive(FilterByServer(Sessions.ActiveSessions)).Count(s => IsConnected(s.State));
 
     private void NavigateToDetail(string sessionId) =>
         Nav.NavigateTo($"/calls/{Uri.EscapeDataString(sessionId)}");

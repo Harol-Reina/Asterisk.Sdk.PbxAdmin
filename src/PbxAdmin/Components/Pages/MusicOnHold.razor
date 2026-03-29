@@ -10,7 +10,10 @@
 
 <div class="page-header-row">
     <h2>@L["Moh_Heading"]</h2>
-    <button class="btn btn-primary" @onclick="NewClass">@L["Moh_NewClass"]</button>
+    <div>
+        <button class="btn btn-sm btn-muted" @onclick="RefreshAsync" disabled="@_refreshing">@L["DP_Refresh"]</button>
+        <button class="btn btn-primary" @onclick="NewClass">@L["Moh_NewClass"]</button>
+    </div>
 </div>
 <HelpPanel SectionKey="MusicOnHold_Overview">@L["Moh_Heading"]</HelpPanel>
 
@@ -73,14 +76,22 @@ else
     private List<MohClass> _classes = [];
     private Dictionary<int, (int Count, long TotalSize)> _fileCounts = [];
     private bool _loading = true;
+    private bool _refreshing;
     private string? _error;
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async Task LoadDataAsync()
     {
         var serverId = ServerSvc.SelectedServerId;
         if (serverId is not null)
         {
             _classes = await MohSvc.GetClassesAsync(serverId);
+            _fileCounts.Clear();
 
             foreach (var cls in _classes)
             {
@@ -88,7 +99,20 @@ else
                 _fileCounts[cls.Id] = (files.Count, files.Sum(f => f.Size));
             }
         }
-        _loading = false;
+    }
+
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+        _error = null;
+        try
+        {
+            await LoadDataAsync();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
     private void NewClass() => Nav.NavigateTo("/moh/edit/new");
