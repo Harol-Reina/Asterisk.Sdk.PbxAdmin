@@ -1,6 +1,7 @@
 using PbxAdmin.LoadTests.Scenarios.Chaos;
 using PbxAdmin.LoadTests.Scenarios.Functional;
 using PbxAdmin.LoadTests.Scenarios.Load;
+using PbxAdmin.LoadTests.Scenarios.Sdk;
 using PbxAdmin.LoadTests.Scenarios.Soak;
 
 namespace PbxAdmin.LoadTests.Scenarios;
@@ -38,11 +39,12 @@ public static class ScenarioRegistry
             ["trunk-failure"] = new TrunkFailureScenario(),
             ["rapid-reregister"] = new RapidReregisterScenario(),
             // SDK validation scenarios
+            ["sdk-smoke"] = new SdkSmokeScenario(),
             ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
             ["sdk-live-drift"] = new SdkLiveDriftScenario(),
             ["sdk-reconnect"] = new SdkReconnectScenario(),
             // Aliases
-            ["smoke"] = new InboundAnswerScenario(),
+            ["smoke"] = new SdkSmokeScenario(),
             ["load"] = new SustainedLoadScenario(),
             ["soak"] = new EightHourSoakScenario(),
             ["chaos"] = new AgentCrashScenario(),
