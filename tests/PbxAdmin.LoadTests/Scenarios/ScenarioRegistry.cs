@@ -43,6 +43,7 @@ public static class ScenarioRegistry
             ["sdk-session-accuracy"] = new SdkSessionAccuracyScenario(),
             ["sdk-live-drift"] = new SdkLiveDriftScenario(),
             ["sdk-reconnect"] = new Sdk.SdkReconnectScenario(),
+            ["sdk-endurance"] = new Sdk.SdkEnduranceScenario(),
             // Aliases
             ["smoke"] = new SdkSmokeScenario(),
             ["load"] = new SustainedLoadScenario(),
