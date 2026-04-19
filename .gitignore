@@ -3,6 +3,7 @@ obj/
 .vs/
 *.user
 *.suo
+*.lscache
 .idea/
 *.swp
 *~
@@ -16,10 +17,14 @@ TestResults/
 test-videos/
 tests/sdk-scenario-results/
 
-# Local documentation (specs, plans, architecture — not committed)
-docs/
+# Superpowers local state (not committed; docs/ is tracked under the Option K layout)
 .superpowers/
 CLAUDE.md
+
+# Strategic / in-progress docs kept local (repo is public)
+docs/specs/2026-03-26-pbxadmin-v2-design.md
+docs/plans/active/*
+!docs/plans/active/.gitkeep
 
 # Claude Code agents and local config
 .claude/
